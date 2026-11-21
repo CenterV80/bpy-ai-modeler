@@ -256,9 +256,10 @@ AI は `f1_help` ツールで使い方を読みます。
 | `f1.header_tank` / `f1.wastegate` / `f1.small_box` | 冷却水のヘッダータンク / ウェイストゲート / ECU・無線・記録装置などの箱 |
 | `f1.hydraulic_pump` / `f1.accumulator` / `f1.valve_block` | 油圧ポンプ / アキュムレーター / 油圧の制御弁 |
 | `f1.nose_crash` / `f1.pitot` / `f1.plank` / `f1.ride_height_sensor` | ノーズの衝撃吸収構造 / ピトー管 / プランク（厚さ 10mm、チタンのスキッド） / 車高のレーザーセンサー |
+| `f1.v6_gear_train` / `f1.gear_cover` / `f1.brake_duct` / `f1.antenna` / `f1.rain_light` | エンジンの前のギア列（クランク → アイドラー → カム） / ギアのカバー / ブレーキダクト / テレメトリーのアンテナ / レインライト |
 
 部品の位置は `f1.LAYOUT`（ミリ）、エンジンの寸法は `f1.V6` にまとめています。ボア 80mm・ストローク 53mm・バンク角 90° は確認できた値、
-ほかの位置と寸法は推定です。全部を組み立てて部品ごとの図鑑（39 項目）を描く例が `skills/bpy-modeling/examples/f1_chassis_catalog_mm.py` にあります。
+ほかの位置と寸法は推定です。作例では、配管・配線がサバイバルセルの壁や隔壁を通る所に、貫通の継ぎ手を自動で付けています。全部を組み立てて部品ごとの図鑑（40 項目）を描く例が `skills/bpy-modeling/examples/f1_chassis_catalog_mm.py` にあります。
 
 歯車は `qm.gear`（平歯車）と `qm.bevel_gear`（かさ歯車）、軸受は `qm.ball_bearing`（内輪・外輪・玉）を使います。
 ギアボックスの中身を組んだ例が `skills/bpy-modeling/examples/f1_gearbox_internals_mm.py` にあります
