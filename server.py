@@ -65,7 +65,7 @@ from starlette.routing import Route  # noqa: E402
 OUT = Path(ARGS.out).resolve()
 RUNS_DIR = OUT / "runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
-FORMATS = ("glb", "fbx", "obj")
+FORMATS = ("glb", "fbx", "obj", "stl")
 TEX_DIR = Path(os.environ.get("BPY_MODELER_TEXTURES", str(ROOT / "textures"))).resolve()
 TEX_EXT = (".png", ".jpg", ".jpeg", ".tga", ".bmp", ".tif", ".tiff", ".webp")
 # 起動時に作るサンプルのテクスチャと、1枚が何メートル分か（マテリアルの "tile" で上書きできる）
@@ -237,11 +237,12 @@ def layout_problems(per: list[dict]) -> list[str]:
         return d if d is not None else g
 
     floating = []
-    if len(per) > 1 or "*" not in may_float:
+    if len(per) > 1:
         for p in per:
-            if p["name"] in may_float or "*" in may_float:
+            if p["name"] in may_float:
                 continue
-            d = max(0.0, p["min"][2])
+            # "*" を浮かせてよいとしたときは地面を数えず、ほかの部品とつながっているかだけを見る
+            d = math.inf if "*" in may_float else max(0.0, p["min"][2])
             for o in per:
                 if d <= tol:
                     break
@@ -321,6 +322,8 @@ def export_all(folder: Path) -> list[str]:
                                                   path_mode="COPY", embed_textures=True),  # テクスチャは FBX に埋め込む
         # OBJ はテクスチャを埋め込めないので、MTL と画像を同じフォルダに書き、まとめて zip にする
         "obj": lambda p: bpy.ops.wm.obj_export(filepath=p, apply_modifiers=True, export_materials=True, path_mode="COPY"),
+        # STL は単位を持たないので、CAD で一般的なミリとして書く（1 = 1mm、Z が上）
+        "stl": lambda p: bpy.ops.wm.stl_export(filepath=p, global_scale=1000.0, apply_modifiers=True, ascii_format=False),
     }
     for fmt, fn in jobs.items():
         try:
@@ -496,10 +499,27 @@ def box_uv(o, slot_tiles: list[float]) -> None:
 
 VIEWS = {  # 視線の向き（カメラ → 被写体）
     "persp": (-1.0, 1.25, -0.8),
-    "front": (0.0, 1.0, 0.0),
-    "side": (-1.0, 0.0, 0.0),
-    "top": (0.0, 0.0, -1.0),
+    "front": (0.0, 1.0, 0.0),      # 正面（-Y 側から）
+    "back": (0.0, -1.0, 0.0),      # 背面（+Y 側から）
+    "side": (-1.0, 0.0, 0.0),      # 右（+X 側から）
+    "left": (1.0, 0.0, 0.0),       # 左（-X 側から）
+    "top": (0.0, 0.0, -1.0),       # 真上
+    "bottom": (0.0, 0.0, 1.0),     # 真下
 }
+
+
+def _nice(x: float) -> float:
+    """1・2・5 × 10^n のうち、x 以上でいちばん近い値（グリッドの間隔）"""
+    e = 10 ** math.floor(math.log10(max(x, 1e-9)))
+    for k in (1, 2, 5, 10):
+        if k * e >= x:
+            return k * e
+    return 10 * e
+
+
+def _axis_label(v) -> str:
+    i = max(range(3), key=lambda k: abs(v[k]))
+    return ("+" if v[i] > 0 else "-") + "XYZ"[i]
 
 
 def _use_nodes(idblock) -> None:
@@ -511,9 +531,11 @@ def _use_nodes(idblock) -> None:
             idblock.use_nodes = True
 
 
-def render_views(views: list[str], size: int, look: str = "clay", wire: bool = True) -> bytes:
-    """Cycles（CPU）で絵を描き、PNG のバイト列を返す。複数の視点は横に並べる。
-    look="clay" は粘土色、"material" はマテリアルとテクスチャのまま。wire でポリゴンの辺を重ねる"""
+def render_views(views: list[str], size: int, look: str = "clay", wire: bool = True, ortho: bool = False,
+                 grid: float | None = None) -> tuple[bytes, list[str]]:
+    """Cycles（CPU）で絵を描き、(PNG のバイト列, 視点ごとの説明) を返す。複数の視点は横に並べる。
+    look="clay" は粘土色、"material" はマテリアルとテクスチャのまま。wire でポリゴンの辺を重ねる。
+    ortho=True なら遠近のない正投影で、白地に寸法のグリッド（間隔 grid メートル、省略時は自動）を引いた図面風にする"""
     import numpy as np
 
     sc = bpy.context.scene
@@ -573,6 +595,8 @@ def render_views(views: list[str], size: int, look: str = "clay", wire: bool = T
     sc.collection.objects.link(sun)
     cam_d = bpy.data.cameras.new("_cam")
     cam_d.lens = 50
+    if ortho:
+        cam_d.type = "ORTHO"
     cam = bpy.data.objects.new("_cam", cam_d)
     sc.collection.objects.link(cam)
     temp += [world, sun, sun_d, cam, cam_d]
@@ -583,8 +607,8 @@ def render_views(views: list[str], size: int, look: str = "clay", wire: bool = T
     sc.cycles.samples = 12
     sc.cycles.use_denoising = False
     sc.render.resolution_x = sc.render.resolution_y = size
-    sc.render.film_transparent = False
-    tiles = []
+    sc.render.film_transparent = bool(ortho)
+    tiles, notes = [], []
     tmp = OUT / "_render.png"
     try:
         for name in views:
@@ -592,14 +616,29 @@ def render_views(views: list[str], size: int, look: str = "clay", wire: bool = T
             dist = radius / math.tan(cam_d.angle / 2) * 1.15
             cam.location = center - d * dist
             # 真上からは向きが決まらないので、画面の上が +Y（奥）になるよう直接指定する
-            cam.rotation_euler = (0, 0, 0) if name == "top" else d.to_track_quat("-Z", "Y").to_euler()
+            if name == "top":
+                cam.rotation_euler = (0, 0, 0)
+            elif name == "bottom":
+                cam.rotation_euler = (math.pi, 0, 0)
+            else:
+                cam.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
             cam_d.clip_start, cam_d.clip_end = dist / 100, dist * 10
+            rot = cam.rotation_euler.to_matrix()
+            right, up = rot.col[0], rot.col[1]
+            if ortho:
+                corners = [mathutils.Vector((x, y, z)) for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
+                ext = max(max(c.dot(right) for c in corners) - min(c.dot(right) for c in corners),
+                          max(c.dot(up) for c in corners) - min(c.dot(up) for c in corners))
+                cam_d.ortho_scale = max(ext * 1.08, 1e-3)
             sc.render.filepath = str(tmp)
             with contextlib.redirect_stdout(io.StringIO()):
                 bpy.ops.render.render(write_still=True)
             img = bpy.data.images.load(str(tmp))
             arr = np.array(img.pixels[:], dtype=np.float32).reshape(size, size, 4)
             bpy.data.images.remove(img)
+            if ortho:
+                arr, note = _drawing_sheet(np, arr, name, size, cam_d.ortho_scale, center, right, up, grid)
+                notes.append(note)
             tiles.append(arr)
     finally:
         sc.world, sc.camera, sc.render.engine, sc.render.resolution_x, sc.render.resolution_y, sc.render.filepath = old
@@ -618,6 +657,9 @@ def render_views(views: list[str], size: int, look: str = "clay", wire: bool = T
             with contextlib.suppress(Exception):
                 coll.remove(t)
     # 横に並べて1枚の PNG にする（pixels は下から上の順）
+    if ortho:  # 図と図の間に白い余白
+        gap = np.ones((size, 6, 4), dtype=np.float32)
+        tiles = [t for k, tile in enumerate(tiles) for t in ((gap, tile) if k else (tile,))]
     sheet = np.concatenate(tiles, axis=1)
     h, w = sheet.shape[:2]
     out = bpy.data.images.new("_sheet", w, h, alpha=False)
@@ -628,7 +670,43 @@ def render_views(views: list[str], size: int, look: str = "clay", wire: bool = T
     bpy.data.images.remove(out)
     data = tmp.read_bytes()
     tmp.unlink(missing_ok=True)
-    return data
+    return data, notes
+
+
+def _drawing_sheet(np, arr, name, size, scale, center, right, up, grid):
+    """正投影の絵を、白地にグリッドを引いた図面風にする。(画像, 説明) を返す"""
+    alpha = arr[..., 3:4]
+    paper = np.ones_like(arr)
+    out = arr * alpha + paper * (1 - alpha)          # 背景を白に
+    out[..., 3] = 1.0
+    ppm = size / scale                               # 1 メートルあたりのピクセル数
+    g = grid or _nice(scale / 25)
+    bg = (alpha[..., 0] < 0.5)
+    cr, cu = center.dot(right), center.dot(up)
+    for axis_val, coord_c, is_col in ((right, cr, True), (up, cu, False)):
+        lo_v = coord_c - scale / 2
+        k0, k1 = math.ceil(lo_v / g), math.floor((lo_v + scale) / g)
+        for k in range(k0, k1 + 1):
+            px = int(round(size / 2 + (k * g - coord_c) * ppm))
+            if not 0 <= px < size:
+                continue
+            if k == 0:
+                col = (0.85, 0.30, 0.30)              # 原点を通る線
+            elif k % 5 == 0:
+                col = (0.55, 0.65, 0.80)              # 太線（5 マスごと）
+            else:
+                col = (0.84, 0.88, 0.94)
+            if is_col:
+                m = bg[:, px]
+                out[m, px, :3] = col
+            else:
+                m = bg[px, :]
+                out[px, m, :3] = col
+    mm = lambda v: f"{v * 1000:g}"
+    note = (f"{name}: 右 = {_axis_label(right)}・上 = {_axis_label(up)}、グリッド 1 マス {mm(g)}mm（太線 {mm(5 * g)}mm、"
+            f"赤線 = 座標 0）、1px ≒ {scale / size * 1000:.2f}mm、図の中心 = ({mm(round(center.x, 4))}, "
+            f"{mm(round(center.y, 4))}, {mm(round(center.z, 4))})mm")
+    return out, note
 
 
 # ================================================================ 実行の記録
@@ -702,7 +780,8 @@ def execute(code: str, title: str) -> dict:
         ok, out = run_code(code)
         STATE["scene_run"] = None
         run = {"id": run_id, "title": title or first_comment(code) or f"実行 {run_id}", "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-               "ok": ok, "output": out[-6000:], "stats": None, "objects": [], "problems": [], "files": [], "materials": []}
+               "ok": ok, "output": out[-6000:], "stats": None, "objects": [], "problems": [], "files": [], "materials": [],
+               "units": bpy.context.scene.get("qm_units", "cm")}
         if ok:
             stats, per, wire = inspect_scene()
             (folder / "wire.json").write_text(json.dumps([round(x, 5) for x in wire]), encoding="utf-8")
@@ -734,6 +813,8 @@ def report(run: dict) -> str:
               f"（四角形 {s['quads']:,} = {pct}%、三角形 {s['tris']:,}、Nゴン {s['ngons']:,}）",
               f"開いている辺 {s['boundary_edges']:,}（穴や板状の部品の縁。意図したものなら問題ない）",
               "", "オブジェクトごと（大きさは 幅X×奥行Y×高さZ）:"]
+    if run.get("units") == "mm":
+        lines[-1] = "オブジェクトごと（大きさは 幅X×奥行Y×高さZ、範囲はワールド座標。単位ミリ）:"
     for o in run["objects"][:40]:
         extra = [f"{label} {o[k]}" for k, label in (("ngons", "Nゴン"), ("bad_edges", "非多様体"), ("flipped_edges", "逆向きの辺"),
                                                     ("inward", "内向き"), ("dup_verts", "重複頂点"), ("degenerate", "つぶれた面"),
@@ -742,8 +823,13 @@ def report(run: dict) -> str:
             extra.append(f"開いている辺 {o['boundary_edges']}")
         size = ""
         if "min" in o:
-            w, d, h = (round((o["max"][i] - o["min"][i]) * 100, 1) for i in range(3))
-            size = f" ／ {w:g}×{d:g}×{h:g}cm（高さ {o['min'][2] * 100:.1f}〜{o['max'][2] * 100:.1f}cm）"
+            if run.get("units") == "mm":
+                w, d, h = (round((o["max"][i] - o["min"][i]) * 1000, 1) for i in range(3))
+                size = (f" ／ {w:g}×{d:g}×{h:g}mm（X {o['min'][0] * 1000:.1f}〜{o['max'][0] * 1000:.1f}、"
+                        f"Y {o['min'][1] * 1000:.1f}〜{o['max'][1] * 1000:.1f}、Z {o['min'][2] * 1000:.1f}〜{o['max'][2] * 1000:.1f}mm）")
+            else:
+                w, d, h = (round((o["max"][i] - o["min"][i]) * 100, 1) for i in range(3))
+                size = f" ／ {w:g}×{d:g}×{h:g}cm（高さ {o['min'][2] * 100:.1f}〜{o['max'][2] * 100:.1f}cm）"
         lines.append(f"- {o['name']}: 面 {o['faces']:,}（四角 {o['quads']:,} / 三角 {o['tris']:,}）{size}"
                      + (f" ⚠ {'、'.join(extra)}" if extra else ""))
     if len(run["objects"]) > 40:
@@ -777,12 +863,14 @@ GUIDE = """Blender（GUI なし）でメッシュを作るツールです。手�
 1. run_script にスクリプト全体を渡して実行する（毎回まっさらな空のシーンから実行される）。
    主な部品の寸法は qm.expect("名前", size=(幅, 奥行, 高さ)) で宣言しておくと、サーバーが照合する
 2. 返ってくるトポロジーの検査結果を読み、問題があれば形を保ったまま直して、スクリプト全体をもう一度実行する
-3. render で絵を見て、頼まれた形になっているかを確かめる。違えば直す（テクスチャは look="material" で見る）
+3. render で絵を見て、頼まれた形になっているかを確かめる。違えば直す（テクスチャは look="material" で見る）。
+   寸法や位置合わせは render(views=["front","side","top"], ortho=True) の正投影（ミリのグリッド付き）で確かめる
 4. 問題がなくなったら、ユーザーに結果を伝える。保存先を頼まれたら export を使う
 
 実行環境:
 - bpy, bmesh, mathutils, math, qm, f1, Vector, Matrix は import 済み。3D ビューや UI はない（F1 は f1_help を読む）
-- 単位はメートルで実寸。Z が上。接地するものは原点を底面の中心に置く
+- 単位はメートルで実寸。Z が上。接地するものは原点を底面の中心に置く。
+  精密な部品や図面用は qm.units("mm") で報告をミリにし、寸法は「120 * qm.MM」のようにミリで書くとよい
 - メッシュは bmesh か bpy.data で直接組み立てる。bpy.ops は 3D ビューがないと動かないものがあるので、
   プリミティブ追加・モディファイア・オブジェクトモードの操作程度にとどめる
 - オブジェクトには分かりやすい英語の名前を付ける。ライト・カメラは不要
@@ -821,11 +909,14 @@ async def run_script(code: str, title: str = "") -> str:
 
 @mcp.tool(structured_output=False)
 async def render(views: list[str] | None = None, size: int = 384, run: int | None = None,
-                 look: str = "clay", wire: bool = True) -> list:
+                 look: str = "clay", wire: bool = True, ortho: bool = False, grid_mm: float | None = None) -> list:
     """結果を絵にして見る（粘土色の面に、黒い線でポリゴンの辺を描いたもの）。
     look: "clay"（粘土色。形とトポロジーを見る）か "material"（マテリアルとテクスチャのまま）
     wire: ポリゴンの辺を重ねるか
-    views: "persp"（斜め前）, "front"（正面 -Y 側から）, "side"（右 +X 側から）, "top"（真上）から選ぶ。
+    ortho: True なら遠近のない正投影で、白地にミリのグリッドを引いた図面風にする（寸法・位置合わせの確認に）
+    grid_mm: グリッドの間隔（ミリ。省略時は大きさに合わせて 1・2・5 × 10^n から自動）
+    views: "persp"（斜め前）, "front"（正面 -Y 側から）, "back"（背面）, "side"（右 +X 側から）, "left"（左）,
+           "top"（真上）, "bottom"（真下）から選ぶ。
            省略時は ["persp", "front", "side"]。複数なら横に並べる
     size: 1視点あたりの大きさ（128〜768 ピクセル）
     run: 何番目の実行を描くか（省略時は最後に成功した実行）"""
@@ -838,8 +929,10 @@ async def render(views: list[str] | None = None, size: int = 384, run: int | Non
         if not target or not target["ok"]:
             return ["描ける実行がありません。先に run_script で形を作ってください"]
         ensure_scene(target)
-        png = render_views(views[:4], max(128, min(int(size), 768)), "material" if look == "material" else "clay", bool(wire))
-    return [f"実行 {target['id']}「{target['title']}」: 左から {', '.join(views[:4])}", Image(data=png, format="png")]
+        png, notes = render_views(views[:4], max(128, min(int(size), 768)), "material" if look == "material" else "clay",
+                                  bool(wire), bool(ortho), grid_mm / 1000 if grid_mm else None)
+    head = f"実行 {target['id']}「{target['title']}」: 左から {', '.join(views[:4])}" + ("（正投影）" if ortho else "")
+    return ["\n".join([head] + notes), Image(data=png, format="png")]
 
 
 @mcp.tool(structured_output=False)
@@ -958,8 +1051,8 @@ async def api_file(req: Request):
     if not f.exists():
         return Response(status_code=404)
     media = {"glb": "model/gltf-binary", "fbx": "application/octet-stream", "obj": "text/plain", "json": "application/json",
-             "zip": "application/zip"}
-    download = name.endswith((".fbx", ".obj", ".zip"))
+             "zip": "application/zip", "stl": "model/stl"}
+    download = name.endswith((".fbx", ".obj", ".zip", ".stl"))
     return FileResponse(f, media_type=media[name.rsplit(".", 1)[1]], filename=f"run{run_id:04d}_{name}" if download else None,
                         headers={"Cache-Control": "no-store"})
 

@@ -608,6 +608,68 @@ def tub(name: str = "Tub", mats=None):
     return [shell, front, rear, hoop]
 
 
+# ---------------------------------------------------------------- シャシーの後ろ（ギアボックス・ドライブシャフトなど）
+# 寸法はすべて推定（ギアボックスやドライブシャフトの寸法は公表されていない）。引数をミリ単位で考えやすいよう、
+# 呼び出し側で MM = 0.001 を掛けて渡す使い方を想定している
+
+
+def gearbox(name: str = "Gearbox", y0: float = 2.90, length: float = 0.66, mats=None):
+    """ギアボックスのケース（前のベルハウジングのフランジから、後ろへ絞り込む）。y0 がエンジン後端の面。
+    戻り値 [フランジ, ケース]"""
+    z0 = EST["plank_z"] + 0.03
+    flange = body(f"{name}_Flange", [(y0, 0, z0 + 0.06, 0.40, 0.36, 0.06), (y0 + 0.022, 0, z0 + 0.06, 0.40, 0.36, 0.06)],
+                  _mk(mats, "magnesium", (0.32, 0.32, 0.34), 0.6, 0.5), n=4)
+    st = [(y0 + 0.020, 0, z0 + 0.08, 0.32, 0.32, 0.05), (y0 + 0.20, 0, z0 + 0.10, 0.28, 0.30, 0.05),
+          (y0 + 0.42, 0, z0 + 0.12, 0.30, 0.30, 0.05),      # デフ（ドライブシャフトの出口）のあたりで少し広い
+          (y0 + 0.56, 0, z0 + 0.15, 0.20, 0.24, 0.04), (y0 + length, 0, z0 + 0.18, 0.15, 0.18, 0.03)]
+    case = body(name, st, _m(mats, "carbon"), n=4)
+    return [flange, case]
+
+
+def crash_structure(name: str = "RearCrash", y0: float = 3.55, length: float = 0.40, mats=None):
+    """後ろの衝撃吸収構造（ギアボックスの後ろに付く、先細りの箱）。戻り値 [構造]"""
+    z0 = EST["plank_z"] + 0.03
+    st = [(y0, 0, z0 + 0.20, 0.15, 0.17, 0.03), (y0 + length * 0.6, 0, z0 + 0.22, 0.12, 0.14, 0.025),
+          (y0 + length, 0, z0 + 0.24, 0.09, 0.10, 0.02)]
+    return [body(name, st, _m(mats, "carbon"), n=3)]
+
+
+def driveshaft(name: str, p_in, p_out, r: float = 0.016, mats=None):
+    """ドライブシャフト（両端の等速ジョイントのハウジング、蛇腹ブーツ、シャフト）。p_in がギアボックス側。
+    戻り値はリスト"""
+    a, b = Vector(p_in), Vector(p_out)
+    L = (b - a).length
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    rubber = _mk(mats, "boot", (0.03, 0.03, 0.03), metal=0.0, rough=0.8)
+    hi, ho = 0.068, 0.060                       # ハウジングの長さ（内・外）
+    bl = 0.075                                  # ブーツの長さ
+    parts = [qm.lathe(f"{name}_InnerCV", [(0.046, 0.0), (0.046, hi * 0.8), (0.036, hi)], seg=24, material=steel)]
+    boot = [(0.034 if k % 2 == 0 else 0.026 - 0.008 * k / 10, hi + bl * k / 10) for k in range(11)]
+    boot[-1] = (r + 0.002, hi + bl)
+    parts.append(qm.lathe(f"{name}_InnerBoot", boot, seg=20, material=rubber))
+    parts.append(qm.lathe(f"{name}_Shaft", [(r, hi + bl), (r, L - ho - bl)], seg=16, material=steel))
+    boot2 = [(r + 0.002, L - ho - bl)] + [(0.026 - 0.008 * (10 - k) / 10 if k % 2 else 0.032, L - ho - bl + bl * k / 10) for k in range(1, 11)]
+    parts.append(qm.lathe(f"{name}_OuterBoot", boot2, seg=20, material=rubber))
+    parts.append(qm.lathe(f"{name}_OuterCV", [(0.034, L - ho), (0.042, L - ho * 0.8), (0.042, L)], seg=24, material=steel))
+    d = (b - a).normalized()
+    qm.orient(parts, origin=a, x_axis=d.orthogonal(), z_axis=d)
+    return parts
+
+
+def anti_roll_bar(name: str, center, half: float, arm: float = 0.07, r: float = 0.010, mats=None):
+    """アンチロールバー（X 方向のねじり棒と、両端の腕）。center は棒の中心。腕は +Z 方向へ立つ。
+    戻り値 [棒, 左の腕, 右の腕]"""
+    c = Vector(center)
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    bar = qm.tube(name, [c + Vector((-half, 0, 0)), c + Vector((half, 0, 0))], radius=r, seg=12, material=steel)
+    arms = []
+    for side in (-1, 1):
+        base = c + Vector((side * (half - 0.012), 0, 0))
+        arms.append(qm.sweep(f"{name}_Arm{'L' if side < 0 else 'R'}", [base, base + Vector((0, 0, arm))],
+                             [(-0.006, -0.012), (0.006, -0.012), (0.006, 0.012), (-0.006, 0.012)], up=(0, 1, 0), material=steel))
+    return [bar] + arms
+
+
 HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でそのまま使える。前 = -Y、前輪の軸 y=0、上 = Z）
 
 まとめて作る: f1.car(livery=(r,g,b), front_wing_elements=3, wheel_covers=True) → {種類: [オブジェクト...]}
@@ -638,6 +700,8 @@ HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でその
 - f1.hub_and_nut(name) / f1.rim(name, front=True, spokes=10)   ハブ・ドライブピン・センターナット / 18 インチホイール
 - f1.upright(name, center, upper, lower, steer, axis)   アップライト（軸受ハウジングと 3 本の腕）
 - f1.steering_rack(name, center) / f1.tub()   ステアリングラック（蛇腹ブーツ付き）/ モノコックの殻・隔壁・ロールフープ
+- f1.gearbox(y0=2.90) / f1.crash_structure(y0=3.55)   ギアボックスのケースとフランジ / 後ろの衝撃吸収構造
+- f1.driveshaft(name, p_in, p_out) / f1.anti_roll_bar(name, center, half)   等速ジョイントとブーツ付きのドライブシャフト / アンチロールバー
 
 寸法: f1.SPEC（2026 年規定で確認できた値）、f1.EST（推定値）、f1.BRAKE（ディスクの直径・厚み）。変えたいときは f1.EST["height"] = 0.93 のように上書きしてから作る
 """

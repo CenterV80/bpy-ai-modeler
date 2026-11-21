@@ -18,6 +18,15 @@
   #tools { position:absolute; left:10px; top:10px; right:10px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
   #caption { position:absolute; left:10px; top:52px; font-size:13px; color:var(--sub); pointer-events:none; }
   #hint { position:absolute; left:10px; bottom:10px; font-size:12px; color:var(--sub); pointer-events:none; }
+  #views { position:absolute; left:10px; top:84px; display:flex; gap:4px; flex-wrap:wrap; }
+  #views button { padding:3px 9px; font-size:12px; }
+  #readout { position:absolute; left:10px; bottom:32px; font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; color:var(--text);
+    background:rgba(17,19,24,.75); padding:3px 8px; border-radius:6px; pointer-events:none; }
+  #readout:empty, #measure:empty { display:none; }
+  #measure { position:absolute; right:10px; bottom:32px; font:12px/1.6 ui-monospace,Menlo,Consolas,monospace; color:var(--text);
+    background:rgba(17,19,24,.85); padding:6px 10px; border-radius:6px; border:1px solid var(--line); max-width:46%; }
+  #tools select { background:#2a2f39; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 6px; font:inherit; }
+  .gridinfo { color:var(--sub); font-size:12px; }
   #empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--sub);
     font-size:13px; text-align:center; padding:24px; pointer-events:none; }
   #empty[hidden] { display:none; }
@@ -84,10 +93,23 @@
       <button id="tWire" class="on">ワイヤー</button>
       <button id="tTex" class="on" title="オフにすると粘土色で形だけを見る">テクスチャ</button>
       <button id="tFrame">全体表示</button>
+      <select id="unit" title="長さの単位"><option value="mm">mm</option><option value="m">m</option></select>
+      <span class="gridinfo" id="gridInfo"></span>
     </div>
+    <div id="views">
+      <button data-view="persp" class="on">斜め</button>
+      <button data-view="front" title="正投影（-Y 側から）">正面</button>
+      <button data-view="back" title="正投影（+Y 側から）">背面</button>
+      <button data-view="left" title="正投影（-X 側から）">左</button>
+      <button data-view="right" title="正投影（+X 側から）">右</button>
+      <button data-view="top" title="正投影（真上から）">上</button>
+      <button id="tMeasure" title="2 点をクリックして距離を測る（Esc で消す）">測る</button>
+    </div>
+    <div id="measure"></div>
+    <div id="readout"></div>
     <div id="caption"></div>
     <div id="empty">まだ何も作っていません。<br>右の手順で AI をつなぎ、作りたいものを AI に頼んでください。</div>
-    <div id="hint">ドラッグ: 回転 ／ 右ドラッグ: 移動 ／ ホイール: ズーム ／ ダブルクリック: 全体表示</div>
+    <div id="hint">ドラッグ: 回転 ／ 右ドラッグ: 移動 ／ ホイール: ズーム ／ ダブルクリック: 全体表示 ／ 座標は Blender の X・Y・Z（Z が上）</div>
   </div>
 
   <aside id="side">
@@ -136,8 +158,9 @@
         <a class="btn" data-fmt="fbx" aria-disabled="true">FBX</a>
         <a class="btn" data-fmt="obj" aria-disabled="true">OBJ（zip）</a>
         <a class="btn" data-fmt="glb" aria-disabled="true">GLB</a>
+        <a class="btn" data-fmt="stl" aria-disabled="true">STL（mm）</a>
       </div>
-      <p class="note">単位はメートル。FBX はセンチ単位で書き出すので、Maya や Unity でそのままの大きさになります。ファイルは output フォルダにも残ります。</p>
+      <p class="note">GLB・OBJ はメートル、FBX はセンチ、STL はミリ（1 = 1mm、Z が上。CAD 向け）で書き出します。どれも実寸です。ファイルは output フォルダにも残ります。</p>
     </section>
 
     <section>
@@ -171,24 +194,163 @@ view.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x16181d);
-const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 1000);
-camera.position.set(1.2, 1, 1.6);
+const persp = new THREE.PerspectiveCamera(40, 1, 0.001, 1000);
+persp.position.set(1.2, 1, 1.6);
+const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.001, 1000);
+let camera = persp, viewName = 'persp', orthoHalf = 1;
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 scene.add(new THREE.HemisphereLight(0xffffff, 0x445066, 1.3));
 const sun = new THREE.DirectionalLight(0xffffff, 1.6);
 sun.position.set(3, 6, 4);
 scene.add(sun);
-scene.add(new THREE.GridHelper(4, 40, 0x4a505c, 0x262a32));
+let unit = (() => { try { return localStorage.getItem('unit') || 'mm'; } catch { return 'mm'; } })();
+$('unit').value = unit;
+const fmt = (m, digits) => unit === 'mm' ? `${(m * 1000).toFixed(digits ?? 1)}` : `${m.toFixed(digits ?? 4)}`;
+const fmtLen = m => `${fmt(m)}${unit}`;
+const fmtStep = m => unit === 'mm' ? `${+(m * 1000).toFixed(3)}mm` : `${+m.toFixed(6)}m`;
+const nice = x => { const e = 10 ** Math.floor(Math.log10(Math.max(x, 1e-9))); for (const k of [1, 2, 5, 10]) if (k * e >= x) return k * e; return 10 * e; };
 
+let grid = null, gridStep = 0.1;
+function setGrid(span) {
+  if (grid) { scene.remove(grid); grid.geometry.dispose(); grid.material.dispose(); }
+  gridStep = nice(Math.max(span, 1e-3) / 20);
+  const n = 60;
+  grid = new THREE.GridHelper(gridStep * n, n, 0x4a505c, 0x262a32);
+  scene.add(grid);
+  $('gridInfo').textContent = `グリッド ${fmtStep(gridStep)}`;
+  placeViewGrid();
+}
+
+// 正投影のときは、見ている面に平行なグリッドをモデルの奥に置く（線はワールド座標のちょうど gridStep の倍数）
+let viewGrid = null;
+function placeViewGrid() {
+  if (viewGrid) { scene.remove(viewGrid); viewGrid.geometry.dispose(); viewGrid.material.dispose(); viewGrid = null; }
+  if (grid) grid.visible = viewName === 'persp';
+  if (viewName === 'persp') return;
+  const box = modelBox();
+  if (!box) return;
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  const n = 2 * Math.ceil(Math.max(s.x, s.y, s.z) * 0.75 / gridStep) + 2;
+  viewGrid = new THREE.GridHelper(gridStep * n, n, 0x5a6475, 0x2a2f38);
+  const snap = v => Math.round(v / gridStep) * gridStep;
+  const d = new THREE.Vector3(...VIEW_DIR[viewName]);
+  if (viewName === 'front' || viewName === 'back') viewGrid.rotation.x = Math.PI / 2;
+  else if (viewName === 'left' || viewName === 'right') viewGrid.rotation.z = Math.PI / 2;
+  viewGrid.position.set(snap(c.x), snap(c.y), snap(c.z));
+  // 奥（視線の先）へ、モデルの外まで下げる
+  const back = (Math.abs(d.x) * s.x + Math.abs(d.y) * s.y + Math.abs(d.z) * s.z) / 2 + gridStep * 0.01;
+  if (d.x) viewGrid.position.x = c.x - d.x * back;
+  if (d.y) viewGrid.position.y = c.y - d.y * back;
+  if (d.z) viewGrid.position.z = c.z - d.z * back;
+  scene.add(viewGrid);
+}
+setGrid(2);
+
+function fitOrtho() {
+  const w = view.clientWidth, h = Math.max(view.clientHeight, 1);
+  const a = w / h;
+  ortho.left = -orthoHalf * a; ortho.right = orthoHalf * a; ortho.top = orthoHalf; ortho.bottom = -orthoHalf;
+  ortho.updateProjectionMatrix();
+}
 function resize() {
   const w = view.clientWidth, h = view.clientHeight;
   renderer.setSize(w, h, false);
-  camera.aspect = w / Math.max(h, 1);
-  camera.updateProjectionMatrix();
+  persp.aspect = w / Math.max(h, 1);
+  persp.updateProjectionMatrix();
+  fitOrtho();
 }
 new ResizeObserver(resize).observe(view);
 renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+
+/* ---------------------------------------------------------------- 座標と測定（ミリ） */
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+const toBlender = p => [p.x, -p.z, p.y];
+const fmtPt = p => toBlender(p).map((v, i) => `${'XYZ'[i]} ${fmt(v)}`).join('  ') + ` ${unit}`;
+
+function pick(ev) {
+  if (!shaded || !shaded.visible) return null;
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObject(shaded, true).find(h => h.object.isMesh);
+  if (!hit) return null;
+  let p = hit.point.clone(), snapped = false;
+  if (hit.face) {   // 近くの頂点に吸着（画面上 10px 以内）
+    const pos = hit.object.geometry.attributes.position;
+    let best = null;
+    for (const i of [hit.face.a, hit.face.b, hit.face.c]) {
+      const v = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(hit.object.matrixWorld);
+      const sp = v.clone().project(camera);
+      const d = Math.hypot((sp.x - ndc.x) * rect.width / 2, (sp.y - ndc.y) * rect.height / 2);
+      if (d < 10 && (!best || d < best.d)) best = { v, d };
+    }
+    if (best) { p = best.v; snapped = true; }
+  }
+  const name = hit.object.name || hit.object.parent?.name || '';
+  return { p, snapped, name };
+}
+
+let measuring = false, mPts = [], mGroup = new THREE.Group();
+scene.add(mGroup);
+function clearMeasure() {
+  mPts = [];
+  mGroup.children.slice().forEach(o => { mGroup.remove(o); o.geometry?.dispose(); o.material?.dispose(); });
+  $('measure').textContent = '';
+}
+function drawMeasure() {
+  mGroup.children.slice().forEach(o => { mGroup.remove(o); o.geometry?.dispose(); o.material?.dispose(); });
+  const box = modelBox();
+  const r = (box ? box.getSize(new THREE.Vector3()).length() : 1) * 0.004;
+  for (const m of mPts) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffb020, depthTest: false }));
+    s.position.copy(m.p); s.renderOrder = 10; mGroup.add(s);
+  }
+  if (mPts.length === 2) {
+    const g = new THREE.BufferGeometry().setFromPoints([mPts[0].p, mPts[1].p]);
+    const l = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffb020, depthTest: false }));
+    l.renderOrder = 10; mGroup.add(l);
+    const a = toBlender(mPts[0].p), b = toBlender(mPts[1].p);
+    const d = mPts[0].p.distanceTo(mPts[1].p);
+    $('measure').innerHTML = `距離 <b>${fmtLen(d)}</b><br>ΔX ${fmt(b[0] - a[0])}  ΔY ${fmt(b[1] - a[1])}  ΔZ ${fmt(b[2] - a[2])} ${unit}`
+      + `<br>1: ${fmtPt(mPts[0].p)}${mPts[0].snapped ? '（頂点）' : ''}<br>2: ${fmtPt(mPts[1].p)}${mPts[1].snapped ? '（頂点）' : ''}`;
+  } else if (mPts.length === 1) {
+    $('measure').textContent = `1: ${fmtPt(mPts[0].p)}${mPts[0].snapped ? '（頂点）' : ''} → 2 点目をクリック`;
+  }
+}
+$('tMeasure').onclick = () => {
+  measuring = !measuring;
+  $('tMeasure').classList.toggle('on', measuring);
+  if (!measuring) clearMeasure();
+  else $('measure').textContent = '1 点目をクリック（面の上。頂点の近くでは頂点に吸着します）';
+};
+addEventListener('keydown', e => { if (e.key === 'Escape') { clearMeasure(); if (measuring) $('measure').textContent = '1 点目をクリック'; } });
+
+let lastMove = 0, downAt = null;
+renderer.domElement.addEventListener('pointermove', ev => {
+  const now = performance.now();
+  if (now - lastMove < 40) return;
+  lastMove = now;
+  const h = pick(ev);
+  $('readout').textContent = h ? `${fmtPt(h.p)}${h.snapped ? '（頂点）' : ''}  ${h.name}` : '';
+});
+renderer.domElement.addEventListener('pointerleave', () => { $('readout').textContent = ''; });
+renderer.domElement.addEventListener('pointerdown', ev => { downAt = [ev.clientX, ev.clientY]; });
+renderer.domElement.addEventListener('pointerup', ev => {
+  if (!measuring || !downAt || Math.hypot(ev.clientX - downAt[0], ev.clientY - downAt[1]) > 4) return;   // ドラッグは無視
+  const h = pick(ev);
+  if (!h) return;
+  if (mPts.length === 2) mPts = [];
+  mPts.push(h);
+  drawMeasure();
+});
+$('unit').onchange = () => {
+  unit = $('unit').value;
+  try { localStorage.setItem('unit', unit); } catch { /* 保存できなくても動く */ }
+  $('gridInfo').textContent = `グリッド ${fmtStep(gridStep)}`;
+  if (mPts.length) drawMeasure();
+  if (selected !== null) select(selected);
+};
 
 const loader = new GLTFLoader();
 let shaded = null, wire = null, showShade = true, showWire = true, showTex = true, framed = false;
@@ -240,22 +402,56 @@ async function loadModel(run) {
   if (shaded) { shaded.visible = showShade; scene.add(shaded); applyLook(); }
   if (wire) { wire.visible = showWire; scene.add(wire); }
   $('empty').hidden = !!(shaded || wire);
+  const box = modelBox();
+  if (box) setGrid(box.getSize(new THREE.Vector3()).length());
   if (!framed && (shaded || wire)) { frameAll(); framed = true; }
 }
 
-function frameAll() {
+function modelBox() {
   const target = shaded || wire;
-  if (!target) return;
+  if (!target) return null;
   const box = new THREE.Box3().setFromObject(target);
-  if (box.isEmpty()) return;
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3()).length() || 1;
-  const dir = camera.position.clone().sub(controls.target).normalize();
-  controls.target.copy(center);
-  camera.position.copy(center).addScaledVector(dir, size * 1.4);
-  camera.near = size / 1000; camera.far = size * 100;
-  camera.updateProjectionMatrix();
+  return box.isEmpty() ? null : box;
 }
+
+// three.js は Y が上。Blender の (X, Y, Z) は three.js の (x, -z, y) にあたる
+const VIEW_DIR = { front: [0, 0, 1], back: [0, 0, -1], right: [1, 0, 0], left: [-1, 0, 0], top: [0, 1, 0] };
+
+function setView(name) {
+  viewName = name;
+  document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === name));
+  const box = modelBox();
+  const c = box ? box.getCenter(new THREE.Vector3()) : new THREE.Vector3();
+  const s = box ? box.getSize(new THREE.Vector3()) : new THREE.Vector3(1, 1, 1);
+  const len = s.length() || 1;
+  if (name === 'persp') {
+    const dir = new THREE.Vector3(1, 0.8, 1.2).normalize();
+    camera = persp;
+    persp.position.copy(c).addScaledVector(dir, len * 1.4);
+    persp.near = len / 1000; persp.far = len * 100;
+    persp.updateProjectionMatrix();
+    controls.enableRotate = true;
+  } else {
+    camera = ortho;
+    const d = new THREE.Vector3(...VIEW_DIR[name]);
+    ortho.up.set(...(name === 'top' ? [0, 0, -1] : [0, 1, 0]));
+    ortho.position.copy(c).addScaledVector(d, len * 2);
+    ortho.near = len / 1000; ortho.far = len * 10;
+    const a = view.clientWidth / Math.max(view.clientHeight, 1);
+    const [w, h] = name === 'top' ? [s.x, s.z] : (name === 'front' || name === 'back') ? [s.x, s.y] : [s.z, s.y];
+    orthoHalf = Math.max(h, w / a) / 2 * 1.1;
+    ortho.zoom = 1;
+    fitOrtho();
+    ortho.lookAt(c);
+    controls.enableRotate = false;      // 正投影は向きを固定（移動とズームだけ）
+  }
+  controls.object = camera;
+  controls.target.copy(c);
+  controls.update();
+  placeViewGrid();
+}
+function frameAll() { setView(viewName); }
+document.querySelectorAll('[data-view]').forEach(b => { b.onclick = () => setView(b.dataset.view); });
 
 function toggle(btn, key) {
   btn.onclick = () => {
@@ -325,6 +521,12 @@ async function select(id) {
   $('code').className = ''; $('code').textContent = r.code;
   $('report').className = ''; $('report').textContent = r.report;
   showStats(r.stats, r.ok ? r.problems : [r.output.trim().split('\n').slice(-1)[0] || 'エラー']);
+  const objs = (r.objects || []).filter(o => o.min);
+  if (objs.length) {
+    const lo = [0, 1, 2].map(i => Math.min(...objs.map(o => o.min[i]))), hi = [0, 1, 2].map(i => Math.max(...objs.map(o => o.max[i])));
+    const t = $('stats').querySelector('table');
+    t?.insertAdjacentHTML('afterbegin', `<tr><td>全体の大きさ（X×Y×Z）</td><td>${fmt(hi[0] - lo[0])} × ${fmt(hi[1] - lo[1])} × ${fmt(hi[2] - lo[2])} ${unit}</td></tr>`);
+  }
   document.querySelectorAll('[data-fmt]').forEach(a => {
     const fmt = a.dataset.fmt, ok = r.files.includes(fmt);
     const file = fmt === 'obj' ? 'model_obj.zip' : `model.${fmt}`;
