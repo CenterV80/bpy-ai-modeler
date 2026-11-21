@@ -645,16 +645,18 @@ def expect(target: str = "*", size=None, floating: bool = False, tol: float = 0.
     sc["qm_expect"] = json.dumps(items)
 
 
-def catalog(key: str, title: str, description: str = "", parts=None, labels=None, group: str = ""):
+def catalog(key: str, title: str, description: str = "", parts=None, labels=None, group: str = "", view: str = "front"):
     """図鑑の項目を登録する（ビューアーの「図鑑」ページで 1 項目 = 1 枚の図になる）。
     key: 項目の識別名（英数字） / title: 見出し（日本語でよい） / description: 説明文 / group: 章（例 "足まわり"）
     parts: この項目に入るオブジェクトの名前、または名前の先頭（例 ["Gearbox", "Clutch_"]）
-    labels: 引き出し線を付ける部品 {"オブジェクト名の先頭": "表示する名前", ...}"""
+    labels: 引き出し線を付ける部品 {"オブジェクト名の先頭": "表示する名前", ...}
+    view: 等角図をどこから見るか。"front"（右前の上、既定）/ "rear"（右後ろの上）/ "front-left" / "rear-left"
+    （ステアリングホイールのように、見せたい面が後ろ = +Y を向いている部品は "rear"）"""
     sc = bpy.context.scene
     items = json.loads(sc.get("qm_catalog", "[]"))
     items = [i for i in items if i["key"] != key]
     items.append({"key": key, "title": title, "description": description, "group": group,
-                  "parts": list(parts or []), "labels": dict(labels or {})})
+                  "parts": list(parts or []), "labels": dict(labels or {}), "view": view})
     sc["qm_catalog"] = json.dumps(items, ensure_ascii=False)
 
 
@@ -710,7 +712,7 @@ HELP = """qm（四角ポリゴン主体のモデリング用の関数。run_scri
 - qm.expect("*", size=(None, None, 1.2))   全体の高さだけ宣言、のようにも書ける
 - qm.expect("Lamp", floating=True)   宙に浮いていてよい部品（それ以外は浮いていると指摘される）
 - qm.expect("*", floating=True)   全体が地面に接していなくてよい（タイヤを外した図面用など）。部品どうしのつながりは引き続き見る
-- qm.catalog(key, title, description, parts=[名前や先頭...], labels={先頭: 表示名}, group="章")
+- qm.catalog(key, title, description, parts=[名前や先頭...], labels={先頭: 表示名}, group="章", view="front"|"rear")
     図鑑の項目を登録する。ビューアーの「図鑑」で、項目ごとに等角図（引き出し線つき）・三面図（寸法線つき）・部品表の 1 枚になる
 - qm.units("mm")   報告の寸法と位置をミリで出す（精密な部品や図面用）。qm.MM = 0.001 を掛けるとミリで書ける
 

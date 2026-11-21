@@ -334,7 +334,8 @@ function plate(e, i) {
   }
   setVisible(e.objects);
   const box = boxOf(e.objects);
-  const iso = draw(box, V(1, 0.75, 1.15).normalize(), V(0, 1, 0), 1100, a => Math.min(1250, Math.max(560, 1100 / a)), 0.26);
+  const vw = e.view || 'front';
+  const iso = draw(box, V(/left/.test(vw) ? -1 : 1, 0.75, /rear/.test(vw) ? -1.15 : 1.15).normalize(), V(0, 1, 0), 1100, a => Math.min(1250, Math.max(560, 1100 / a)), 0.26);
   callouts(iso, e.labels || []);
   const orthos = VIEWS.map(vw => { const d = draw(box, vw.dir, vw.up, 620, 400, 0.22); dims(d); return { ...d, cap: vw.cap }; });
   const s = box.getSize(new THREE.Vector3());
@@ -347,7 +348,7 @@ function plate(e, i) {
       <span class="group">${esc(e.group || '')}　部品 ${e.objects.length} 点・全体 ${mm(s.x)} × ${mm(s.z)} × ${mm(s.y)} mm（X×Y×Z）</span></div>
     ${e.description ? `<p class="desc">${esc(e.description)}</p>` : ''}
     <div class="figs">
-      <figure><img alt="等角図"><figcaption>等角図（引き出し線は主な部品）</figcaption></figure>
+      <figure><img alt="等角図"><figcaption>等角図（${/rear/.test(e.view || '') ? '後ろ' : '前'}${/left/.test(e.view || '') ? '左' : '右'}の上から。引き出し線は主な部品）</figcaption></figure>
       <div class="ortho">${orthos.map(o => `<figure><img alt="${esc(o.cap)}"><figcaption>${esc(o.cap)}　寸法は mm</figcaption></figure>`).join('')}</div>
     </div>
     ${rows ? `<table><thead><tr><th>部品</th><th>オブジェクト数</th><th>大きさ X × Y × Z（mm）</th></tr></thead><tbody>${rows}</tbody></table>` : ''}`;

@@ -46,6 +46,7 @@ bpy-modeler は、Blender（GUI なし）でスクリプトを実行し、トポ
 | 同じ部品を並べる | `qm.array` / `qm.radial` / `qm.mirror` | 柵の柱・スポーク・ボルト円・左右の脚 |
 | 翼・羽根・プロペラ | `qm.airfoil` ＋ `qm.loft`（F1 なら `f1.wing_element`） | 断面は NACA。下向きの力が欲しいなら camber を負に |
 | F1・フォーミュラカー | `f1.car()` か `f1` の部品の関数 | 先に `f1_help` を読む。寸法は `f1.SPEC` / `f1.EST`、前は -Y |
+| エンジン・コクピット・冷却（F1） | `f1.v6_engine` / `f1.intake` / `f1.exhaust` / `f1.turbocharger` / `f1.steering_wheel` / `f1.seat` / `f1.radiator` / `f1.pipe` | 位置は `f1.LAYOUT`（ミリ）にまとめてある。配管は通り道の点を、ほかの部品の外側に置く |
 | サスペンション・ブレーキの機構 | `f1.wishbone` / `f1.pushrod` / `f1.rocker` / `f1.damper` / `f1.upright` / `f1.brake_disc` / `f1.caliper` | 先に取り付け点（ピボット・ボールジョイント）の座標を決め、部品はその点の間に作る。原点で作る部品は `qm.orient` で据える |
 
 ## 寸法の目安（メートル）
@@ -128,3 +129,4 @@ bpy-modeler は、Blender（GUI なし）でスクリプトを実行し、トポ
 - `f1_front_corner.py`：モノコックと左前の足まわり（A アーム・プッシュロッド・ロッカー・ダンパー・ステアリング・アップライト・ブレーキ・ハブ・ホイール）
 - `f1_rear_chassis_mm.py`：シャシーの後ろ（ギアボックス・ドライブシャフト・後輪の足まわり・ブレーキ）。寸法をすべてミリで書いた例
 - `f1_gearbox_internals_mm.py`：ギアボックスの中身（クラッチ・入出力軸・前進 8 段・ドッグハブ・フォーク・シフトドラム・かさ歯車・デフ・軸受、半透明のケース）
+- `f1_chassis_catalog_mm.py`：車体を除いたシャシーの全部品（サバイバルセル・コクピット・燃料・電池・V6 エンジンの外観と中身・吸排気・ターボ・MGU-K・冷却・前後の足まわり・ギアボックス）と、28 項目の図鑑（qm.catalog）

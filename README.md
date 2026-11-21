@@ -239,6 +239,22 @@ AI は `f1_help` ツールで使い方を読みます。
 | `f1.clutch` / `f1.dog_hub` | カーボンの多板クラッチ（直径およそ 100mm） / ドッグハブ（両面のドッグとフォークの溝） |
 | `f1.shift_barrel` / `f1.selector_fork` / `f1.differential` | シフトドラム / セレクターフォーク（ドラムの溝に入るピン付き） / デフ（ケースと出力フランジ） |
 
+**シャシー全体（車体を除く部品）**
+
+| 関数 | 部品 |
+|---|---|
+| `f1.survival_cell` / `f1.roll_hoop` / `f1.halo_frame` / `f1.side_impact` | サバイバルセル（殻・上ぶた・隔壁・ダッシュボードの梁） / ロールフープ / ヘイロー / 側面衝撃吸収構造 |
+| `f1.seat` / `f1.harness` / `f1.headrest` | シート（U 字の殻） / 6 点式シートベルトとバックル / ヘッドレスト |
+| `f1.steering_wheel` / `f1.steering_column` | ステアリングホイール（画面・シフトランプ・ボタン・回すスイッチ・シフトとクラッチのパドル・クイックリリース） / コラム（ユニバーサルジョイント付き） |
+| `f1.pedal` / `f1.master_cylinder` / `f1.fire_extinguisher` | ペダル / ブレーキのマスターシリンダー / 消火器 |
+| `f1.fuel_cell` / `f1.energy_store` / `f1.control_electronics` / `f1.oil_tank` | 燃料セル / エネルギーストア（電池） / 制御電子機器 / オイルタンク |
+| `f1.v6_engine` / `f1.v6_internals` | V6 90° エンジンの外観（クランクケース・ブロック・ヘッド・カムカバー・ポンプ類） / クランクシャフト・ピストン・コンロッド |
+| `f1.intake` / `f1.exhaust` / `f1.turbocharger` / `f1.mgu_k` | 吸気（トランペット・プレナム・スロットル） / 排気（マニホールド・集合部） / ターボ / MGU-K |
+| `f1.radiator` / `f1.pipe` | ラジエーター・インタークーラー・オイルクーラー / 配管（冷却水・オイル・燃料・吸気・高電圧の色分け） |
+
+部品の位置は `f1.LAYOUT`（ミリ）、エンジンの寸法は `f1.V6` にまとめています。ボア 80mm・ストローク 53mm・バンク角 90° は確認できた値、
+ほかの位置と寸法は推定です。全部を組み立てて部品ごとの図鑑（28 項目）を描く例が `skills/bpy-modeling/examples/f1_chassis_catalog_mm.py` にあります。
+
 歯車は `qm.gear`（平歯車）と `qm.bevel_gear`（かさ歯車）、軸受は `qm.ball_bearing`（内輪・外輪・玉）を使います。
 ギアボックスの中身を組んだ例が `skills/bpy-modeling/examples/f1_gearbox_internals_mm.py` にあります
 （前進 8 段・シームレスシフト・カーボン多板クラッチ・かさ歯車でデフへ、は公表されている構成。軸間距離・歯数などは推定）。
