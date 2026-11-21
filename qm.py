@@ -646,20 +646,22 @@ def expect(target: str = "*", size=None, floating: bool = False, tol: float = 0.
 
 
 def catalog(key: str, title: str, description: str = "", parts=None, labels=None, group: str = "", view: str = "front",
-            context=None):
+            context=None, section=None):
     """図鑑の項目を登録する（ビューアーの「図鑑」ページで 1 項目 = 1 枚の図になる）。
     key: 項目の識別名（英数字） / title: 見出し（日本語でよい） / description: 説明文 / group: 章（例 "足まわり"）
     parts: この項目に入るオブジェクトの名前、または名前の先頭（例 ["Gearbox", "Clutch_"]）
     labels: 引き出し線を付ける部品 {"オブジェクト名（または先頭）": "表示する名前", ...}。同じ名前のオブジェクトがあればそれだけを指す
     view: 等角図をどこから見るか。"front"（右前の上、既定）/ "rear"（右後ろの上）/ "front-left" / "rear-left"
     （ステアリングホイールのように、見せたい面が後ろ = +Y を向いている部品は "rear"）
-    context: 位置の目安として薄く描く周りの部品（名前か先頭）。配管・配線・センサーのように細かく散らばった部品に"""
+    context: 位置の目安として薄く描く周りの部品（名前か先頭）。配管・配線・センサーのように細かく散らばった部品に
+    section: 断面図を足す。"X" / "Y" / "Z"（部品の中央で切る）か ("Y", 位置[m])。切り口は斜線で、部品ごとに向きを変える。
+    切り口が正しく塗れるのは閉じたメッシュ（穴のない立体）だけ。小さい部品の切り口ほど上に描く（ケースの中の歯車が見える）"""
     sc = bpy.context.scene
     items = json.loads(sc.get("qm_catalog", "[]"))
     items = [i for i in items if i["key"] != key]
     items.append({"key": key, "title": title, "description": description, "group": group,
                   "parts": list(parts or []), "labels": dict(labels or {}), "view": view,
-                  "context": list(context or [])})
+                  "context": list(context or []), "section": list(section) if isinstance(section, (list, tuple)) else section})
     sc["qm_catalog"] = json.dumps(items, ensure_ascii=False)
 
 
@@ -715,7 +717,7 @@ HELP = """qm（四角ポリゴン主体のモデリング用の関数。run_scri
 - qm.expect("*", size=(None, None, 1.2))   全体の高さだけ宣言、のようにも書ける
 - qm.expect("Lamp", floating=True)   宙に浮いていてよい部品（それ以外は浮いていると指摘される）
 - qm.expect("*", floating=True)   全体が地面に接していなくてよい（タイヤを外した図面用など）。部品どうしのつながりは引き続き見る
-- qm.catalog(key, title, description, parts=[名前や先頭...], labels={先頭: 表示名}, group="章", view="front"|"rear", context=[薄く描く周りの部品])
+- qm.catalog(key, title, description, parts=[名前や先頭...], labels={先頭: 表示名}, group="章", view="front"|"rear", context=[薄く描く周りの部品], section="X"|"Y"|"Z"|("Y", 位置))
     図鑑の項目を登録する。ビューアーの「図鑑」で、項目ごとに等角図（引き出し線つき）・三面図（寸法線つき）・部品表の 1 枚になる
 - qm.units("mm")   報告の寸法と位置をミリで出す（精密な部品や図面用）。qm.MM = 0.001 を掛けるとミリで書ける
 
