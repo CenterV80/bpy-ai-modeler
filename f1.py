@@ -1396,7 +1396,9 @@ def oil_tank(name: str = "OilTank", y0: float = 2.25, y1: float = 2.415, half_w:
 def pipe(name: str, points, r: float = 0.019, kind: str = "hose", mats=None):
     """配管（冷却水・オイル・燃料・吸気・高電圧ケーブル）。points はメートルの点。両端に締め付けの輪。戻り値はリスト"""
     cols = {"hose": ((0.05, 0.05, 0.06), 0.0, 0.7), "water": ((0.10, 0.18, 0.45), 0.0, 0.6), "oil": ((0.45, 0.30, 0.08), 0.0, 0.6),
-            "fuel": ((0.55, 0.45, 0.05), 0.0, 0.6), "air": ((0.05, 0.05, 0.06), 0.1, 0.5), "hv": ((0.95, 0.45, 0.05), 0.0, 0.5)}
+            "fuel": ((0.55, 0.45, 0.05), 0.0, 0.6), "air": ((0.05, 0.05, 0.06), 0.1, 0.5), "hv": ((0.95, 0.45, 0.05), 0.0, 0.5),
+            "brake": ((0.55, 0.55, 0.57), 0.8, 0.45), "hydraulic": ((0.60, 0.58, 0.52), 0.8, 0.4), "loom": ((0.04, 0.04, 0.05), 0.0, 0.8),
+            "extinguisher": ((0.70, 0.70, 0.72), 0.9, 0.3)}
     c, metal, rough = cols.get(kind, cols["hose"])
     m = qm.material(f"F1_Pipe{kind.capitalize()}", c, metal=metal, rough=rough)
     steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
@@ -1407,6 +1409,243 @@ def pipe(name: str, points, r: float = 0.019, kind: str = "hose", mats=None):
         cl = qm.ring(f"{name}_Clamp{k + 1}", r + 0.003, r - 0.001, 0.008, seg=12, origin="center", material=steel)
         qm.orient(cl, origin=p + d * 0.02, x_axis=d.orthogonal(), z_axis=d)
         parts.append(cl)
+    return parts
+
+
+
+# ---------------------------------------------------------------- エンジンの細部（動弁系・点火・燃料噴射）
+# 確認できた事実: 1 気筒 4 バルブ・DOHC、空気ばね（ニューマチック）のバルブスプリング、直噴（1 気筒 1 本、最大 500bar）。
+# 推定: バルブの傾き・径、カムの位置・形、プラグとインジェクターの寸法と向き
+
+
+def _bank_frame(bank):
+    a = math.radians(V6["vee"] / 2)
+    d = Vector((bank * math.sin(a), 0, math.cos(a)))
+    inner = Vector((-bank * math.cos(a), 0, math.sin(a)))
+    return d, inner
+
+
+def _bank_dir(bank, dt, du):
+    d, inner = _bank_frame(bank)
+    return (d * dt + inner * du).normalized()
+
+
+VALVE = {"in_r": 14.5, "ex_r": 12.5, "in_u": 16.0, "ex_u": -18.0, "dy": 15.0, "tilt": 12.0, "len": 96.0}
+
+
+def v6_valvetrain(name: str = "Valve", mats=None):
+    """動弁系（吸気 2・排気 2 のバルブ、空気ばね、タペット、左右のバンクに 2 本ずつのカムシャフトとカムのギア）。
+    バルブは V の内側（吸気）と外側（排気）へ VALVE["tilt"] 度ずつ傾ける。戻り値はリスト"""
+    MM = 0.001
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
+    cam_m = qm.material("F1_CamSteel", (0.55, 0.53, 0.50), metal=0.95, rough=0.25)
+    deck = V6["deck"]
+    tl = math.radians(VALVE["tilt"])
+    parts = []
+    cyl = v6_cylinders()
+    for bank, tag in ((-1, "L"), (1, "R")):
+        ys = [y for b, i, y in cyl if b == bank]
+        for kind, r_v, u0, s in (("In", VALVE["in_r"], VALVE["in_u"], 1), ("Ex", VALVE["ex_r"], VALVE["ex_u"], -1)):
+            ax = _bank_dir(bank, math.cos(tl), s * math.sin(tl))
+            cam_t = deck + 2 + (VALVE["len"] + 16) * math.cos(tl)
+            cam_u = u0 + s * (VALVE["len"] + 16) * math.sin(tl)
+            for i, y in enumerate(ys):
+                for j, dy in enumerate((-VALVE["dy"], VALVE["dy"])):
+                    nm = f"{name}_{tag}{i + 1}{kind}{'ab'[j]}"
+                    base = v6_point(bank, deck + 2, u0, y + dy) * MM
+                    v = qm.lathe(nm, [(r_v * MM, 0), (r_v * MM, 0.0015), ((r_v - 4) * MM, 0.004), (0.003, 0.009), (0.003, VALVE["len"] * MM)],
+                                 seg=16, material=ti if kind == "In" else steel)
+                    spring = qm.cylinder(f"{nm}_AirSpring", 0.011, 0.024, seg=16, location=(0, 0, 0.062), material=steel)
+                    tappet = qm.cylinder(f"{nm}_Tappet", 0.0115, 0.010, seg=16, location=(0, 0, 0.087), material=steel)
+                    qm.orient([v, spring, tappet], origin=base, x_axis=(0, 1, 0), z_axis=ax)
+                    parts += [v, spring, tappet]
+            # カムシャフト（Y 方向）と、バルブごとのカム
+            y0, y1 = ys[0] - 100, min(ys[-1] + 70, LAYOUT["gearbox_y0"] - 30)
+            c0 = v6_point(bank, cam_t, cam_u, y0) * MM
+            c1 = v6_point(bank, cam_t, cam_u, y1) * MM
+            parts.append(qm.tube(f"Cam_{tag}{kind}", [c0, c1], radius=0.012, seg=16, material=cam_m))
+            d, inner = _bank_frame(bank)
+            for i, y in enumerate(ys):
+                for j, dy in enumerate((-VALVE["dy"], VALVE["dy"])):
+                    ph = math.radians(120 * i + (0 if kind == "In" else 100) + 15 * j + (60 if bank > 0 else 0))
+                    prof = []
+                    for k in range(24):
+                        a = 2 * math.pi * k / 24
+                        rr = 16 + 9 * max(0.0, math.cos(a - ph)) ** 3
+                        prof.append((rr * math.cos(a), rr * math.sin(a)))
+                    ctr = v6_point(bank, cam_t, cam_u, y + dy)
+                    secs = [[tuple((ctr + Vector((0, yy, 0)) - ax * 0 + d * pt + inner * pu) * MM) for pt, pu in prof] for yy in (-6, 6)]
+                    parts.append(qm.loft(f"Cam_{tag}{kind}Lobe{i + 1}{'ab'[j]}", secs, material=cam_m))
+            g = qm.gear(f"Cam_{tag}{kind}Gear", 36, 0.0015, 0.010, bore=0.008, material=cam_m)
+            qm.orient(g, origin=v6_point(bank, cam_t, cam_u, y0 + 15) * MM, x_axis=(1, 0, 0), z_axis=(0, 1, 0))
+            parts.append(g)
+    return parts
+
+
+def v6_ignition(name: str = "Plug", mats=None):
+    """点火プラグ（シリンダーの真上、カムカバーの点火コイルの下まで）と、直噴のインジェクター（吸気側から斜めに）、
+    左右のバンクの燃料レール。戻り値はリスト"""
+    MM = 0.001
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    ceramic = qm.material("F1_Ceramic", (0.92, 0.92, 0.90), metal=0.0, rough=0.4)
+    black = qm.material("F1_Connector", (0.08, 0.08, 0.09), metal=0.1, rough=0.6)
+    deck = V6["deck"]
+    tc = deck + V6["head"] + V6["cover"] - 6
+    parts = []
+    cyl = v6_cylinders()
+    for bank, tag in ((-1, "L"), (1, "R")):
+        d, inner = _bank_frame(bank)
+        ys = [y for b, i, y in cyl if b == bank]
+        for i, y in enumerate(ys):
+            plug = qm.lathe(f"{name}_{tag}{i + 1}", [(0.005, 0), (0.007, 0.004), (0.007, 0.060), (0.010, 0.062), (0.010, 0.078),
+                                                      (0.006, 0.082), (0.006, (tc - deck - 1) * MM)], seg=12, material=steel)
+            insul = qm.cylinder(f"{name}_{tag}{i + 1}Insulator", 0.0065, (tc - deck - 85) * MM, seg=12, location=(0, 0, 0.080), material=ceramic)
+            qm.orient([plug, insul], origin=v6_point(bank, deck + 1, 0, y) * MM, x_axis=(0, 1, 0), z_axis=d)
+            parts += [plug, insul]
+            tip = v6_point(bank, deck + 6, 34, y)
+            top = v6_point(bank, deck + 30, 92, y)
+            ax = (top - tip).normalized()
+            inj = qm.lathe(f"Injector_{tag}{i + 1}", [(0.003, 0), (0.0045, 0.006), (0.0065, 0.012), (0.0065, 0.050),
+                                                       (0.009, 0.052), (0.009, (top - tip).length * MM)], seg=12, material=steel)
+            con = qm.box(f"Injector_{tag}{i + 1}Connector", (0.014, 0.010, 0.012), origin="bottom", material=black)
+            qm.orient(inj, origin=tip * MM, x_axis=(0, 1, 0), z_axis=ax)
+            qm.orient(con, origin=(top - ax * 4) * MM, x_axis=(0, 1, 0), z_axis=ax)
+            parts += [inj, con]
+        r0 = v6_point(bank, deck + 30, 100, ys[0] - 40) * MM
+        r1 = v6_point(bank, deck + 30, 100, ys[-1] + 25) * MM
+        parts.append(qm.tube(f"FuelRail_{tag}", [r0, r1], radius=0.008, seg=12, material=steel))
+    return parts
+
+
+# ---------------------------------------------------------------- 小さな部品（シャシー）
+
+
+def tether(name: str, p0, p1, mats=None):
+    """ホイールテザー（車体とアップライトをつなぐ繊維のケーブル。サスペンションのアームの中を通す）。両端に金具。戻り値はリスト"""
+    m = qm.material("F1_Tether", (0.85, 0.70, 0.10), metal=0.0, rough=0.8)
+    alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
+    a, b = Vector(p0), Vector(p1)
+    d = (b - a).normalized()
+    parts = [qm.tube(name, [a, b], radius=0.004, seg=8, material=m)]
+    for k, p in enumerate((a, b)):
+        e = qm.ring(f"{name}_End{k + 1}", 0.008, 0.0035, 0.006, seg=12, origin="center", material=alu)
+        qm.orient(e, origin=p, x_axis=d, z_axis=d.orthogonal())
+        parts.append(e)
+    return parts
+
+
+def small_box(name: str, center, size, color=(0.15, 0.15, 0.17), connectors: int = 2, mats=None):
+    """電子機器などの小さな箱（角を丸め、前の面にコネクター）。center は底面の中心（メートル）。戻り値はリスト"""
+    case = qm.material(f"F1_Box{name[:3]}", color, metal=0.5, rough=0.4)
+    black = qm.material("F1_Connector", (0.08, 0.08, 0.09), metal=0.1, rough=0.6)
+    cx, cy, cz = center
+    w, d, h = size
+    parts = [qm.box(name, size, segs=(2, 2, 2), origin="bottom", location=center, material=case, bevel=min(size) * 0.08)]
+    for k in range(connectors):
+        x = cx - w / 2 + w * (k + 1) / (connectors + 1)
+        parts.append(qm.cylinder(f"{name}_Connector{k + 1}", min(0.010, h * 0.25), 0.016, seg=12, axis="Y",
+                                 location=(x, cy - d / 2 - 0.006, cz + h / 2), material=black))
+    return parts
+
+
+def coupling(name: str, location, axis=(-1, 0, 0), r: float = 0.022, mats=None):
+    """配管の口（燃料を入れ・抜く口、給水口など）。フランジと、ふた付きの筒。axis は外向き。戻り値はリスト"""
+    alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
+    red = qm.material("F1_CapRed", (0.75, 0.08, 0.06), metal=0.3, rough=0.4)
+    fl = qm.cylinder(f"{name}_Flange", r * 1.7, 0.006, seg=16, location=(0, 0, -0.003), material=alu)
+    body_ob = qm.cylinder(name, r, 0.030, seg=16, material=alu)
+    cap = qm.cylinder(f"{name}_Cap", r * 1.1, 0.010, seg=16, location=(0, 0, 0.030), material=red)
+    ax = Vector(axis).normalized()
+    qm.orient([fl, body_ob, cap], origin=location, x_axis=ax.orthogonal(), z_axis=ax)
+    return [fl, body_ob, cap]
+
+
+def nozzle(name: str, location, direction, mats=None):
+    """消火器のノズル（先が細くなる小さな筒）。direction へ吹き出す。戻り値 [ノズル]"""
+    alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
+    n = qm.lathe(name, [(0.008, 0), (0.008, 0.012), (0.005, 0.022), (0.003, 0.026)], seg=12, material=alu)
+    dd = Vector(direction).normalized()
+    qm.orient(n, origin=location, x_axis=dd.orthogonal(), z_axis=dd)
+    return [n]
+
+
+def drink_system(name: str = "Drink", bag=(0.27, 1.50, 0.075), tube=None, mats=None):
+    """ドリンクの装置（シートの横の袋、電動ポンプ、ヘルメットへの管）。bag は袋の底面の中心。戻り値はリスト"""
+    bag_m = qm.material("F1_DrinkBag", (0.55, 0.75, 0.85), metal=0.0, rough=0.5)
+    pump_m = qm.material("F1_Pump", (0.12, 0.12, 0.13), metal=0.5, rough=0.4)
+    tube_m = qm.material("F1_DrinkTube", (0.15, 0.35, 0.75), metal=0.0, rough=0.5)
+    bx, by, bz = bag
+    b = qm.box(name, (0.06, 0.20, 0.12), segs=(1, 2, 2), origin="bottom", location=bag, material=bag_m, bevel=0.02)
+    pump = qm.cylinder(f"{name}_Pump", 0.016, 0.05, seg=12, axis="Y", location=(bx, by + 0.12, bz + 0.03), material=pump_m)
+    tube = tube or [(bx, by + 0.145, bz + 0.03), (bx - 0.02, by + 0.20, bz + 0.20), (bx - 0.04, by + 0.30, bz + 0.50), (bx - 0.05, by + 0.32, bz + 0.62)]
+    t = qm.tube(f"{name}_Tube", tube, radius=0.004, seg=8, material=tube_m)
+    return [b, pump, t]
+
+
+# ---------------------------------------------------------------- 中くらいの部品
+
+
+def header_tank(name: str = "HeaderTank", location=(0, 0, 0), size=(0.12, 0.08, 0.09), mats=None):
+    """冷却水のヘッダータンク（膨張タンク）。圧力キャップ付き。location は底面の中心。戻り値はリスト"""
+    alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
+    x, y, z = location
+    t = qm.box(name, size, segs=(2, 2, 2), origin="bottom", location=location, material=alu, bevel=0.012)
+    cap = qm.cylinder(f"{name}_Cap", 0.018, 0.015, seg=16, location=(x - size[0] * 0.25, y, z + size[2] - 0.002),
+                      material=qm.material("F1_CapRed", (0.75, 0.08, 0.06), metal=0.3, rough=0.4))
+    return [t, cap]
+
+
+def wastegate(name: str = "Wastegate", location=(0, 0, 0), mats=None):
+    """ウェイストゲート（タービンへの排気の一部を逃がす弁。弁の本体と、上の空気圧のアクチュエーター）。
+    location は弁の下端（排気管の上）。戻り値はリスト"""
+    inconel = qm.material("F1_Inconel", (0.42, 0.36, 0.30), metal=0.9, rough=0.4)
+    alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
+    x, y, z = location
+    body_ob = qm.cylinder(name, 0.026, 0.040, seg=16, location=(x, y, z - 0.010), material=inconel)
+    act = qm.lathe(f"{name}_Actuator", [(0.012, 0), (0.030, 0.008), (0.030, 0.030), (0.012, 0.036)], seg=20,
+                   location=(x, y, z + 0.030), material=alu)
+    return [body_ob, act]
+
+
+def accumulator(name: str, p0, p1, r: float = 0.030, mats=None):
+    """油圧のアキュムレーター（両端の丸い筒。片側に油の口）。p0 から p1 へ。戻り値はリスト"""
+    m = qm.material("F1_Accumulator", (0.65, 0.12, 0.10), metal=0.6, rough=0.35)
+    alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
+    a, b = Vector(p0), Vector(p1)
+    L = (b - a).length
+    prof = [(r * 0.35, 0), (r * 0.8, r * 0.15), (r, r * 0.5), (r, L - r * 0.5), (r * 0.8, L - r * 0.15), (r * 0.35, L)]
+    body_ob = qm.lathe(name, prof, seg=20, material=m)
+    port = qm.cylinder(f"{name}_Port", r * 0.3, 0.015, seg=10, location=(0, 0, -0.013), material=alu)
+    d = (b - a).normalized()
+    qm.orient([body_ob, port], origin=a, x_axis=d.orthogonal(), z_axis=d)
+    return [body_ob, port]
+
+
+def hydraulic_pump(name: str, location, axis=(0, -1, 0), mats=None):
+    """油圧ポンプ（エンジンに付き、ギアで回る）。本体・ふた・吸い込みと吐き出しの口。axis は前（ふた）の向き。戻り値はリスト"""
+    alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
+    dark = qm.material("F1_PumpDark", (0.25, 0.25, 0.27), metal=0.7, rough=0.4)
+    body_ob = qm.cylinder(name, 0.028, 0.040, seg=16, material=dark)
+    lid = qm.cylinder(f"{name}_Lid", 0.022, 0.010, seg=16, location=(0, 0, 0.040), material=alu)
+    ports = [qm.cylinder(f"{name}_Port{k + 1}", 0.007, 0.018, seg=10, axis="X", location=(s * 0.034, 0, 0.020), material=alu)
+             for k, s in enumerate((-1, 1))]
+    ax = Vector(axis).normalized()
+    qm.orient([body_ob, lid] + ports, origin=location, x_axis=ax.orthogonal(), z_axis=ax)
+    return [body_ob, lid] + ports
+
+
+def valve_block(name: str, center, size=(0.08, 0.10, 0.08), solenoids: int = 6, mats=None):
+    """油圧の制御弁のブロック（変速・クラッチ・デフなどの油圧を切り替える）。上面にソレノイド弁。center は底面の中心。戻り値はリスト"""
+    alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
+    sol = qm.material("F1_Solenoid", (0.10, 0.10, 0.11), metal=0.4, rough=0.5)
+    cx, cy, cz = center
+    w, d, h = size
+    parts = [qm.box(name, size, segs=(2, 3, 2), origin="bottom", location=center, material=alu, bevel=0.004)]
+    for k in range(solenoids):
+        x = cx - w * 0.25 + w * 0.5 * (k % 2)
+        y = cy - d / 2 + d * (k // 2 + 0.5) / ((solenoids + 1) // 2)
+        parts.append(qm.cylinder(f"{name}_Solenoid{k + 1}", 0.009, 0.030, seg=12, location=(x, y, cz + h - 0.002), material=sol))
     return parts
 
 
@@ -1456,7 +1695,11 @@ HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でその
 - パワーユニット: f1.v6_engine()（外観）/ f1.v6_internals(crank_deg)（クランク・ピストン・コンロッド）/ f1.intake() /
   f1.exhaust(turbine_in) / f1.turbocharger()（軸 Z・原点）/ f1.mgu_k()（軸 Z・原点）。
   f1.V6（ボア 80・ストローク 53・バンク角 90 は確認できた値、ほかは推定）、f1.v6_point(bank, t, u, y) でバンクの座標から車の座標へ
-- 冷却・配管: f1.radiator(name, length, height)（原点・Y が長さ）/ f1.pipe(name, [点...], r, kind="water"|"oil"|"fuel"|"air"|"hv")
+- エンジンの細部: f1.v6_valvetrain()（バルブ・空気ばね・タペット・カムシャフト）/ f1.v6_ignition()（点火プラグ・インジェクター・燃料レール）
+- 小物: f1.tether(name, p0, p1)（ホイールテザー）/ f1.coupling(name, location, axis) / f1.nozzle(name, location, direction) /
+  f1.drink_system() / f1.small_box(name, center, size)（ECU・無線・ADR などの箱）/ f1.header_tank(location) / f1.wastegate(location)
+- 油圧: f1.hydraulic_pump(name, location, axis) / f1.accumulator(name, p0, p1) / f1.valve_block(name, center)
+- 冷却・配管: f1.radiator(name, length, height)（原点・Y が長さ）/ f1.pipe(name, [点...], r, kind="water"|"oil"|"fuel"|"air"|"hv"|"brake"|"hydraulic"|"loom"|"extinguisher")。ブレーキ・油圧・配線の束も pipe で
 
 寸法: f1.SPEC（2026 年規定で確認できた値）、f1.EST（推定値）、f1.BRAKE（ディスクの直径・厚み）。変えたいときは f1.EST["height"] = 0.93 のように上書きしてから作る
 """

@@ -289,7 +289,8 @@ def resolve_catalog(per: list[dict]) -> list[dict]:
             size = {"min": lo, "max": hi}
         labels = []
         for pre, text in (it.get("labels") or {}).items():
-            hit = [n for n in objs if n == pre or n.startswith(pre)]
+            # 同じ名前のオブジェクトがあればそれだけ（"Seat" はシートの殻、"Seat_..." の小物は含めない）。なければ名前の先頭で
+            hit = [n for n in objs if n == pre] or [n for n in objs if n.startswith(pre)]
             if hit:
                 labels.append({"prefix": pre, "text": text, "objects": hit})
         out.append({**it, "objects": objs, "box": size, "labels": labels})
