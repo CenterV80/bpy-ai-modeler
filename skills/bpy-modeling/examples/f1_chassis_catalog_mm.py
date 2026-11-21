@@ -4,7 +4,8 @@
 #           エネルギーストアはサバイバルセルの中（ドライバーの後ろ・燃料タンクの下）
 # 推定値  : 部品の位置（f1.LAYOUT）と、上に書いた以外の寸法（公表されていない）
 # 確認できた事実（細部）: 1 気筒 4 バルブ・DOHC・空気ばね、直噴（1 気筒 1 本・最大 500bar）
-# 図鑑    : ビューアーの「図鑑を開く」で、qm.catalog で登録した項目ごとに等角図・三面図・部品表を描く（36 項目）
+#           プランクは厚さ 10mm・すり減りの下限 9mm・測る穴は直径 50mm
+# 図鑑    : ビューアーの「図鑑を開く」で、qm.catalog で登録した項目ごとに等角図・三面図・部品表を描く（39 項目）
 qm.units("mm")
 MM = qm.MM
 L = f1.LAYOUT
@@ -160,7 +161,7 @@ for s, tg in ((-1, "FL"), (1, "FR")):
     upper, lower, steer = Vector((s * 0.70, 0.0, C.z + 0.165)), Vector((s * 0.72, 0.0, C.z - 0.165)), Vector((s * 0.70, -0.11, C.z + 0.01))
     f1.upright(f"Upright_{tg}", U, upper, lower, steer, axis=OUT, mats=mats)
     cal_in = DC - OUT * (f1.BRAKE["front"][1] / 2 + 0.018) + cal_dir * 0.14
-    CORNER[tg] = {"cal": cal_in, "lower": lower, "upper": upper}
+    CORNER[tg] = {"cal": cal_in, "lower": lower, "upper": upper, "mid": Mf - OUT * (TWF * 0.95 * 0.05)}
     qm.sweep(f"CaliperBracket_{tg}", [U + cal_dir * 0.06, cal_in], [(-0.010, -0.014), (0.010, -0.014), (0.010, 0.014), (-0.010, 0.014)],
              up=OUT, material=titan)
     f1.wishbone(f"LowerArm_{tg}", (s * 0.17, -0.20, 0.17), (s * 0.17, 0.22, 0.17), lower, mats=mats)
@@ -200,7 +201,7 @@ for side, tag in ((-1, "L"), (1, "R")):
     upper, lower, toe = P(s * 690, WB, WZ + 165), P(s * 700, WB, WZ - 160), P(s * 690, WB + 110, WZ + 5)
     f1.upright(f"Upright_R{tag}", U, upper, lower, toe, axis=OUT, mats=mats)
     cal_in = DC - OUT * ((32 / 2 + 18) * MM) + cal_dir * (115 * MM)
-    CORNER["R" + tag] = {"cal": cal_in, "lower": lower, "upper": upper}
+    CORNER["R" + tag] = {"cal": cal_in, "lower": lower, "upper": upper, "mid": M - OUT * (RIM_W * 0.05 * MM)}
     qm.sweep(f"CaliperBracket_R{tag}", [U + cal_dir * (60 * MM), cal_in],
              [(-10 * MM, -14 * MM), (10 * MM, -14 * MM), (10 * MM, 14 * MM), (-10 * MM, 14 * MM)], up=OUT, material=titan)
     f1.driveshaft(f"Driveshaft_R{tag}", P(s * 150, WB, WZ), U + OUT * (25 * MM), mats=mats)
@@ -358,6 +359,21 @@ cov = [f1.v6_point(-1, t_top + 10, -45, y) for y in (2560, 2700, 2840)]
 f1.pipe("Loom_Engine", [P(-300, 2480, 470)] + [c * MM for c in cov], r=0.008, kind="loom", mats=mats)
 f1.pipe("Loom_Cockpit", [P(-400, 1150, 220), P(-300, 1080, 400), P(-150, 1060, 520), P(-20, 1050, 540)], r=0.008, kind="loom", mats=mats)
 
+# ---- ノーズの衝撃吸収構造とピトー管、プランク、センサー
+f1.nose_crash("NoseCrash", y0=-0.35, length=0.62, mats=mats)
+f1.pitot("Pitot", tip=(0, -0.90, 0.33), mats=mats)
+f1.plank("Plank", y0=0.30, y1=3.10, width=0.30, mats=mats)
+for k, (y, z) in enumerate(((0.5, 0.065), (1.2, 0.065), (1.9, 0.065), (2.7, CZ * MM - 0.150), (3.05, 0.145))):
+    qm.cylinder(f"Plank_Mount{k + 1}", 0.012, z - f1.EST["plank_z"] + 0.004, seg=12, location=(0, y, f1.EST["plank_z"] - 0.002), material=titan)
+for s, tg in ((-1, "L"), (1, "R")):
+    f1.ride_height_sensor(f"RideHeight_F{tg}", (s * 0.07, -0.25, 0.066), mats=mats)
+    f1.ride_height_sensor(f"RideHeight_R{tg}", (s * 0.07, 3.15, 0.171), mats=mats)
+tpms_m = qm.material("F1_TPMS", (0.85, 0.80, 0.15), metal=0.3, rough=0.4)
+for tg in ("FL", "FR", "RL", "RR"):
+    c = CORNER[tg]["mid"]
+    qm.box(f"TPMS_{tg}", (0.030, 0.020, 0.012), origin="bottom", location=(c.x, c.y, c.z + 0.2236), material=tpms_m)
+f1.small_box("IMU", (0, 1.845, 0.073), (0.05, 0.04, 0.03), color=(0.20, 0.35, 0.65), connectors=1, mats=mats)
+
 # =========================================================== 検査
 qm.expect("*", floating=True)        # 車体とフロアがないので、全体は地面から浮いてよい（部品どうしのつながりは見る）
 qm.expect("Disc_FL", size=(32 * MM, 328 * MM, 328 * MM), tol=0.02)
@@ -472,11 +488,11 @@ qm.catalog("ignition", "点火プラグとインジェクター", "点火プラ�
                    "Engine_CoilL3": "点火コイル"}, group=G4)
 qm.catalog("tethers", "ホイールテザー", "事故でタイヤが外れて飛ばないよう、車体とアップライトをつなぐ繊維のケーブル。サスペンションのアームの中を通す。"
            "本数は規定書で確かめられなかったので、図では上下のアームに 1 本ずつ。", parts=["Tether_"],
-           labels={"Tether_FLU": "前・上", "Tether_FLL": "前・下", "Tether_RRU": "後ろ・上", "Tether_RRL": "後ろ・下"}, group=G6)
+           labels={"Tether_FLU": "前・上", "Tether_FLL": "前・下", "Tether_RRU": "後ろ・上", "Tether_RRL": "後ろ・下"}, group=G6, context=["Cell", "Upright_", "Rim_", "Gearbox"])
 qm.catalog("brake_lines", "ブレーキの配管", "前後 2 系統。前はマスターシリンダーから前の左右のキャリパーへ。"
            "後ろはブレーキバイワイヤの弁を通して後ろの左右へ。", parts=["BrakeLine", "BBW", "Master", "PedalBrake"],
            labels={"BrakeLine_FL": "前の配管", "BrakeLine_Rear": "後ろの系統", "BBW": "ブレーキバイワイヤの弁", "Master1": "マスターシリンダー",
-                   "BrakeLine_RR": "後ろの配管"}, group=G6)
+                   "BrakeLine_RR": "後ろの配管"}, group=G6, context=["Cell", "Upright_", "Caliper_", "Gearbox"])
 qm.catalog("arb_heave", "前のアンチロールバーとヒーブダンパー", "左右のロッカーをつなぐねじり棒（ロール）と、上下の動きだけを受ける 3 本目のダンパー（ヒーブ）。"
            "配置は推定。", parts=["FrontARB", "FrontHeave", "ARBLink_F", "HeaveLink_F", "Rocker_F", "RockerMount_F"],
            labels={"FrontARB": "アンチロールバー", "FrontHeave": "ヒーブダンパー", "ARBLink_FL": "リンク", "Rocker_FR": "ロッカー"}, group=G6)
@@ -486,6 +502,16 @@ qm.catalog("drink", "ドリンクの装置・無線・記録装置", "シート�
 qm.catalog("hydraulics", "油圧系", "エンジンの前のポンプで油圧を作り、アキュムレーターにためる。ギアボックスの横の制御弁から、"
            "シフト・クラッチと、ラックのパワーステアリングへ送る。配置は推定。", parts=["HydPump", "HydLine", "Accumulator", "ValveBlock", "PowerSteering"],
            labels={"HydPump": "油圧ポンプ", "Accumulator": "アキュムレーター", "ValveBlock": "制御弁", "PowerSteeringLine": "パワーステアリングへ",
-                   "PowerSteering_Valve": "パワーステアリングの弁", "HydLine_Shift": "シフトへ"}, group=G7)
+                   "PowerSteering_Valve": "パワーステアリングの弁", "HydLine_Shift": "シフトへ"}, group=G7, context=["Cell", "Gearbox", "Engine_Crankcase", "Engine_Block", "Engine_Head", "Rack"])
 qm.catalog("electronics", "電装（ECU と配線）", "車の制御をする ECU は左のサイドポッドの前。配線の束でエンジンの点火コイル、ステアリングホイールへ。",
-           parts=["ECU", "Loom"], labels={"ECU": "ECU", "Loom_Main": "配線の束", "Loom_Engine": "エンジンへ", "Loom_Cockpit": "コクピットへ"}, group=G3)
+           parts=["ECU", "Loom"], labels={"ECU": "ECU", "Loom_Main": "配線の束", "Loom_Engine": "エンジンへ", "Loom_Cockpit": "コクピットへ"}, group=G3, context=["Cell", "Engine_Crankcase", "Engine_Block", "Engine_Head", "Engine_CamCover", "Column"])
+qm.catalog("nose", "ノーズの衝撃吸収構造", "前の隔壁に留める、先細りのカーボンの筒。正面からの衝突のエネルギーを吸う。上にピトー管。"
+           "形と長さは推定。", parts=["NoseCrash", "Pitot", "Cell_FrontBulkhead"],
+           labels={"NoseCrash": "衝撃吸収構造", "NoseCrash_Flange": "取り付けのフランジ", "Pitot": "ピトー管", "Cell_FrontBulkhead": "前の隔壁"}, group=G1)
+qm.catalog("plank", "プランク", "フロアの下の中央に付く板。厚さ 10mm で、レースの後に 9mm 未満にすり減っていると失格になる。"
+           "すり減りは直径 50mm の穴で測り、穴のまわりにチタンのスキッド。フロアを外しているので、取り付けは柱で示した。幅と長さは推定。",
+           parts=["Plank"], labels={"Plank": "プランク", "Plank_Skid1": "チタンのスキッド", "Plank_Mount3": "取り付けの柱"}, group=G1)
+qm.catalog("sensors", "センサー", "車高を測るレーザー（前後左右）、ホイールの中の空気圧センサー（FIA が決めた装置）、ノーズの上のピトー管（風速）、"
+           "シートの後ろの慣性センサー。実車にはこのほか数百のセンサーがある。位置は推定。", parts=["RideHeight", "TPMS", "Pitot", "IMU"],
+           labels={"RideHeight_FL": "車高センサー（前）", "RideHeight_RR": "車高センサー（後ろ）", "TPMS_FR": "空気圧センサー", "TPMS_RL": "空気圧センサー",
+                   "Pitot": "ピトー管", "IMU": "慣性センサー"}, group=G3, context=["Cell", "NoseCrash", "Rim_", "Gearbox", "Plank"])
