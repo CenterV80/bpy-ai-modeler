@@ -20,21 +20,23 @@ def P(x, y, z):
 mats = f1.materials()
 titan = mats["titanium"]
 
+YR_TUB = f1.LAYOUT["tub"][-1][0] * MM          # サバイバルセルの後ろの隔壁（= エンジンの前の面）
+
 # 配管・配線は route で引く。サバイバルセルの隔壁や横の壁を通る所に、貫通の継ぎ手（グロメット）を自動で付ける
 def route(name, points, r=0.019, kind="hose", mats=None):
     parts = f1.pipe(name, points, r=r, kind=kind, mats=mats)
     pts = [Vector(q) for q in points]
     z0 = f1.EST["plank_z"] + 0.03
     def wall(q):                                         # 壁の外なら正、中なら負
-        if not (-0.35 <= q.y <= 2.42) or not (z0 < q.z < f1.tub_section(q.y / MM)[1] * MM):
+        if not (-0.35 <= q.y <= YR_TUB) or not (z0 < q.z < f1.tub_section(q.y / MM)[1] * MM):
             return None
         return abs(q.x) - f1.tub_section(q.y / MM)[0] / 2 * MM
     hits = []
     for a, b in zip(pts, pts[1:]):
-        for yb in (2.415, -0.345):                       # 後ろと前の隔壁
+        for yb in (YR_TUB - 0.005, -0.345):              # 後ろと前の隔壁
             if (a.y - yb) * (b.y - yb) < 0:
                 q = a + (b - a) * ((yb - a.y) / (b.y - a.y))
-                w = wall(Vector((q.x, min(max(q.y, -0.349), 2.419), q.z)))
+                w = wall(Vector((q.x, min(max(q.y, -0.349), YR_TUB - 0.001), q.z)))
                 if w is not None and w < 0:
                     hits.append((q, (b - a).normalized()))
         prev = None
@@ -102,13 +104,20 @@ FC0, FC1 = L["fuel_cell"]
 f1.energy_store("ES", y0=FC0 * MM, y1=FC1 * MM, width=0.56, z0=0.073, h=0.10, mats=mats)
 f1.fuel_cell("FuelCell", y0=FC0 * MM, y1=FC1 * MM, half_w=0.32, z0=0.179, z1=0.64, mats=mats)
 f1.control_electronics("CE", center=(0.16, 2.33, 0.073), size=(0.18, 0.14, 0.16), mats=mats)
-f1.oil_tank("OilTank", 2.25, 2.415, 0.14, 0.30, 0.60, mats=mats)
+f1.oil_tank("OilTank", 2.25, 2.49, 0.14, 0.30, 0.60, mats=mats)          # 燃料タンクとエンジンの間（隔壁の手前まで）
+# オイルフィルター（オイルタンクの左の横に。缶と中のエレメント）
+ofc = qm.cylinder("Engine_OilFilter", 0.030, 0.040, seg=32, axis="X", location=(-0.160, 2.37, 0.45), material=titan)
+qm.cut(ofc, [qm.cylinder("_ofi", 0.0275, 0.040, seg=32, axis="X", location=(-0.162, 2.37, 0.45))])
+ofe = qm.cylinder("Engine_OilFilter_Element", 0.025, 0.032, seg=32, axis="X", location=(-0.160, 2.37, 0.45),
+                  material=qm.material("F1_FilterPaper", (0.85, 0.80, 0.55), metal=0.0, rough=0.9))
+qm.cut(ofe, [qm.cylinder("_ofc", 0.010, 0.036, seg=24, axis="X", location=(-0.160, 2.37, 0.45))])
 
 # =========================================================== パワーユニット
 f1.v6_engine_real(30, mats=mats)        # ブロック・ベッドプレート・ヘッド・ガスケット・カバー・オイルパン・クランク・コンロッド・ピストン・バルブ・カム・ポンプ
-for k, (x, z) in enumerate(((-0.11, CZ - 70), (0.11, CZ - 70), (-0.11, CZ + 20), (0.11, CZ + 20))):   # エンジンをサバイバルセルに留めるスタッド
-    qm.cylinder(f"Engine_MountStud{k + 1}", 0.008, (YF - L["tub"][-1][0] + 8) * MM, seg=12, axis="Y",
-                location=(x, (YF + L["tub"][-1][0]) / 2 * MM, z * MM), material=titan)
+# エンジンの前の面を、サバイバルセルの後ろの隔壁にボルトで直接留める（エンジンが車体の骨組みを兼ねる）
+for k, (x, z) in enumerate(((-0.11, CZ - 70), (0.11, CZ - 70), (-0.11, CZ + 30), (0.11, CZ + 30), (-0.20, CZ + 180), (0.20, CZ + 180))):
+    qm.orient(qm.bolt(f"Engine_MountBolt{k + 1}", "M10", 0.040, material=titan), origin=(x, YR_TUB - 0.010, z * MM),
+              x_axis=(1, 0, 0), z_axis=(0, -1, 0))
 f1.intake("Intake", mats=mats)
 TC = P(0, 3060, 610)                                       # ターボの軸の中心
 f1.exhaust("Exhaust", turbine_in=(115, 3120, 610), mats=mats)
@@ -117,6 +126,8 @@ qm.box("Turbo_Bracket", (0.04, 0.04, 0.110), origin="bottom", location=(0, 3.06,
 inconel = qm.material("F1_Inconel", (0.42, 0.36, 0.30), metal=0.9, rough=0.4)
 qm.tube("Tailpipe", [P(0, 3185, 610), P(0, 3420, 600), P(0, 3760, 560)], radius=0.040, seg=16, material=inconel)
 route("AirInlet", [P(0, 2918, 610), P(0, 2880, 690), P(0, 2700, 750)], r=0.045, kind="air", mats=mats)
+# エアボックス：ドライバーの頭の上のロールフープの吸気口から、燃料タンクとエンジンの上を通ってターボへ（中空。形は推定）
+f1.airbox("Airbox", mats=mats)
 qm.orient(qm.ring("AirInlet_Flange", 0.058, 0.044, 0.010, seg=20, origin="center", material=titan), origin=P(0, 2702, 750),
           x_axis=(1, 0, 0), z_axis=(0, -1, 0.3))
 
@@ -155,19 +166,20 @@ def cooler(name, s, center, length, height, tilt=15, thick=50):
 
 for s, tg in ((-1, "L"), (1, "R")):
     r_in, r_out = cooler(f"Radiator{tg}", s, (s * 505, 1700, 350), 500, 420, thick=65)     # サイドポッドの高さいっぱい
-    wp = f1.v6_point(s, 130, -40, YF - 15)
-    out = f1.v6_point(s, 300, -40, YF + 10)
-    route(f"WaterPipeHot{tg}", [out * MM, P(out.x, YF - 20, out.z), P(s * 330, 2450, 600), P(s * 480, 2150, 640), r_in + Vector((0, 0, 0.03)), r_in - Vector((0, 0, 0.012))],
+    wpc, wpo = f1.water_pump_point(s)                 # ブロックの横のウォーターポンプ（中心と外向き）
+    wp = wpc + wpo * 25                               # 吸い口
+    out = f1.v6_point(s, 300, -40, YF + 20)           # ヘッドの前の上の出口（前のカバーの上）
+    route(f"WaterPipeHot{tg}", [out * MM, P(out.x + s * 30, YF + 20, out.z + 40), P(s * 330, YF + 15, 600), P(s * 480, 2150, 640), r_in + Vector((0, 0, 0.03)), r_in - Vector((0, 0, 0.012))],
             r=0.019, kind="water", mats=mats)
-    route(f"WaterPipeCold{tg}", [r_out + Vector((0, 0, 0.012)), r_out - Vector((0, 0, 0.03)), r_out - Vector((s * 0.03, 0.03, 0.05)), P(s * 390, 1440, 70), P(s * 390, 2430, 110),
-                                   P(s * 200, 2448, 250), P(wp.x, YF - 28, wp.z)], r=0.019, kind="water", mats=mats)
+    route(f"WaterPipeCold{tg}", [r_out + Vector((0, 0, 0.012)), r_out - Vector((0, 0, 0.03)), r_out - Vector((s * 0.03, 0.03, 0.05)), P(s * 390, 1440, 70), P(s * 390, 2430, 110), P(s * 390, YF + 220, 140),
+                                   P(s * 250, wp.y - 10, 240), wp * MM + wpo * 0.012, wp * MM - wpo * 0.010], r=0.019, kind="water", mats=mats)
 
 ic_in, ic_out = cooler("Intercooler", 1, (505, 2110, 345), 220, 360, thick=60)
 th_y = min(y for _, _, y in f1.v6_cylinders()) - 55 - 40
 route("ChargePipe1", [TC + Vector((0.115, -0.060, -0.045)), P(300, 2950, 600), P(430, 2500, 570), ic_in + Vector((0, 0, 0.04)), ic_in - Vector((0, 0, 0.012))],
         r=0.030, kind="air", mats=mats)
-route("ChargePipe2", [ic_out + Vector((0, 0, 0.012)), ic_out - Vector((0, 0, 0.04)), P(455, 2440, 95), P(300, 2462, 400), P(120, 2468, 600),
-                        P(0, 2482, 600), P(0, th_y + 15, CZ + 330)], r=0.030, kind="air", mats=mats)
+route("ChargePipe2", [ic_out + Vector((0, 0, 0.012)), ic_out - Vector((0, 0, 0.04)), P(455, YF + 20, 95), P(300, YF + 20, 400), P(120, YF + 22, 600),
+                        P(0, YF + 25, 600), P(0, th_y + 15, CZ + 330)], r=0.030, kind="air", mats=mats)
 
 oc_in, oc_out = cooler("OilCooler", -1, (-505, 2100, 330), 200, 300, thick=55)
 route("OilLineFeed", [P(-120, 2330, 470), P(-330, 2330, 480), oc_in + Vector((0, 0, 0.04)), oc_in - Vector((0, 0, 0.012))], r=0.012, kind="oil", mats=mats)
@@ -175,8 +187,7 @@ route("OilLineReturn", [oc_out + Vector((0, 0, 0.012)), oc_out - Vector((0, 0, 0
         r=0.012, kind="oil", mats=mats)
 
 # 燃料・高電圧の配線
-hp = f1.v6_point(1, 250, 0, YF - 17)
-route("FuelLine", [P(250, 2200, 560), P(250, 2440, 560), P(200, 2455, 470), P(hp.x, YF - 33, hp.z)], r=0.008, kind="fuel", mats=mats)
+route("FuelLine", [P(250, 2200, 560), P(250, 2470, 590), P(60, YF + 25, 520), P(0, YF + 50, CZ + 200)], r=0.008, kind="fuel", mats=mats)
 route("HVCableK", [P(-168, 2255, 123), P(-250, 2440, 130), P(-320, 2600, 190), MG + Vector((-0.098, -0.080, 0))], r=0.011, kind="hv", mats=mats)
 route("HVCableCE", [P(168, 2255, 123), P(110, 2300, 150), P(66, 2330, 153)], r=0.011, kind="hv", mats=mats)
 
@@ -345,8 +356,8 @@ EZ = 0.065 + 0.008 + 0.05
 route("ExtLine_Cockpit", [P(0, 1320, EZ / MM), P(40, 1345, 100), P(150, 1200, 90), P(150, 700, 100), P(150, 660, 108)], r=0.004, kind="extinguisher", mats=mats)
 f1.nozzle("ExtNozzle_Cockpit", P(150, 660, 108), (0, -1, 0.3), mats=mats)
 route("ExtLine_Engine", [P(0, 1320, EZ / MM), P(-40, 1345, 100), P(-230, 1400, 90), P(-300, 1900, 90), P(-300, 2300, 90),
-                           P(-250, 2440, 200), P(-210, 2465, 245)], r=0.004, kind="extinguisher", mats=mats)
-f1.nozzle("ExtNozzle_Engine", P(-210, 2465, 245), (0.3, 1, 0.3), mats=mats)
+                           P(-250, 2470, 200), P(-215, YF + 25, 245)], r=0.004, kind="extinguisher", mats=mats)
+f1.nozzle("ExtNozzle_Engine", P(-215, YF + 25, 245), (0.3, 1, 0.3), mats=mats)
 
 # ---- ドリンクの装置、無線、事故データ記録装置
 f1.drink_system("Drink", bag=(0.27, 1.50, 0.073), mats=mats)
@@ -372,7 +383,7 @@ qm.tube("Wastegate_Pipe", [P(-150, 3070, 600), P(-80, 3250, 625), P(0, 3420, 612
 # ---- 冷却水のヘッダータンク（後ろの上ぶたの上）と、ギアボックスのオイルクーラー
 deck2380 = f1.tub_section(2380)[1] * MM
 f1.header_tank("HeaderTank", (-0.20, 2.38, deck2380), mats=mats)
-route("HeaderTankHose", [(-0.25, 2.40, deck2380 + 0.03), (-0.30, 2.43, deck2380 + 0.0), (-0.33, 2.45, 0.60)], r=0.008, kind="water", mats=mats)
+route("HeaderTankHose", [(-0.25, 2.40, deck2380 + 0.03), (-0.30, 2.45, deck2380 + 0.01), (-0.33, (YF + 15) * MM, 0.60)], r=0.008, kind="water", mats=mats)
 gbc = f1.radiator("GearboxOilCooler", 0.16, 0.12, 0.04, mats=mats)
 qm.orient(gbc, origin=P(-240, 3150, 260), x_axis=(1, 0, 0), z_axis=(0, 0, 1))
 qm.sweep("GearboxOilCooler_Bracket", [P(-138, 3150, 260), P(-222, 3150, 260)], [(-0.006, -0.012), (0.006, -0.012), (0.006, 0.012), (-0.006, 0.012)],
@@ -381,10 +392,10 @@ route("GearboxOilLine1", [P(-240, 3247, 330), P(-200, 3262, 345), P(-120, 3262, 
 route("GearboxOilLine2", [P(-240, 3053, 190), P(-200, 3045, 185), P(-120, 3045, 235)], r=0.006, kind="oil", mats=mats)
 
 # ---- 油圧系（エンジンの前のポンプ → アキュムレーター → ギアボックスの横の制御弁 → シフト・クラッチ、パワーステアリング）
-f1.hydraulic_pump("HydPump", P(90, YF, 190), axis=(0, -1, 0), mats=mats)
+f1.hydraulic_pump("HydPump", P(132, YF + 65, 230), axis=(1, 0, 0), mats=mats)      # エンジンの右の横（前の面は隔壁に付くため）
 f1.accumulator("Accumulator", P(190, 2600, 160), P(190, 2780, 160), mats=mats)
 f1.valve_block("ValveBlock", (-0.19, 3.00, 0.34), mats=mats)
-route("HydLine_Pump", [P(90, 2478, 190), P(150, 2490, 175), P(190, 2540, 160), P(190, 2592, 160)], r=0.005, kind="hydraulic", mats=mats)
+route("HydLine_Pump", [P(160, YF + 65, 230), P(190, YF + 75, 200), P(190, 2590, 165), P(190, 2596, 160)], r=0.005, kind="hydraulic", mats=mats)
 route("HydLine_Supply", [P(190, 2775, 160), P(230, 2860, 120), P(230, 2960, 120), P(-190, 2960, 120), P(-190, 3000, 345)], r=0.005, kind="hydraulic", mats=mats)
 route("HydLine_Shift", [P(-150, 3010, 390), P(-60, 2965, 470), P(40, 2965, 360)], r=0.004, kind="hydraulic", mats=mats)
 route("HydLine_Clutch", [P(-190, 2960, 360), P(-120, 2930, 300), P(-55, 2925, 272)], r=0.004, kind="hydraulic", mats=mats)
@@ -426,9 +437,10 @@ f1.gear_cover("Engine_GearCover", [(0, CZ * MM, 0.077), (I2.x * MM, I2.y * MM, 0
 # ---- 主軸受のメタルとオイルフィルターは、f1.v6_engine_real に含まれる
 
 # ---- 戻りの配管（燃料の戻り、オイルのスカベンジ、エンジンへのオイル、デフの油圧）
-route("FuelReturn", [P(70.7, 2610, 482), P(70, 2480, 530), P(200, 2440, 600), P(200, 2220, 600)], r=0.006, kind="fuel", mats=mats)
+route("FuelReturn", [P(70.7, 2610, 482), P(60, YF + 30, 545), P(200, 2470, 605), P(200, 2220, 600)], r=0.006, kind="fuel", mats=mats)
 route("OilLineScavenge", [P(118, 2570, 150), P(150, 2470, 130), P(100, 2430, 330), P(100, 2400, 335)], r=0.008, kind="oil", mats=mats)
-route("OilLineEngine", [P(-100, 2400, 330), P(-100, 2460, 260), P(-90, YF - 30, 222)], r=0.008, kind="oil", mats=mats)
+route("OilLineFilter", [P(-140, 2330, 420), P(-160, 2350, 430), P(-160, 2365, 445)], r=0.008, kind="oil", mats=mats)        # タンク → フィルター
+route("OilLineEngine", [P(-180, 2370, 450), P(-200, 2470, 330), P(-128, YF + 20, 250)], r=0.008, kind="oil", mats=mats)       # フィルター → エンジン
 route("HydLine_Diff", [P(-190, 3020, 360), P(-120, 3300, 400), P(-50, WB, 360)], r=0.004, kind="hydraulic", mats=mats)
 
 # ---- エネルギーストアと制御電子機器の冷却（右の前の小さなクーラー → ES → CE → クーラー）
@@ -522,10 +534,10 @@ qm.catalog("crank", "クランクシャフト・ピストン・コンロッド",
            "ピストンにはリング 3 本とピン・サークリップ。ピストンの直径 80mm（ボア）、行程 53mm。コンロッドの長さは推定。", parts=["Crank_"],
            labels={"Crank_PistonL1": "ピストン", "Crank_RingL1": "ピストンリング", "Crank_RodR2": "コンロッド", "Crank_RodCapR2": "キャップ",
                    "Crank_Shaft": "クランクシャフト", "Crank_MainShell2Upper": "主軸受のメタル", "Crank_Gear": "前のギア"}, group=G4)
-qm.catalog("intake", "吸気", "ターボで圧縮しインタークーラーで冷やした空気が、スロットルからプレナムへ入り、"
-           "シリンダーごとのトランペットで吸い込まれる。", parts=["Intake_", "AirInlet"],
+qm.catalog("intake", "吸気", "ドライバーの頭の上の吸気口からエアボックスを通ってターボへ。圧縮しインタークーラーで冷やした空気が、スロットルからプレナムへ入り、"
+           "シリンダーごとのトランペットで吸い込まれる。", parts=["Intake_", "AirInlet", "Airbox"],
            labels={"Intake_Plenum": "プレナム", "Intake_Throttle": "スロットル", "Intake_TrumpetL2": "吸気トランペット",
-                   "AirInlet": "ターボへの吸気管"}, group=G4)
+                   "AirInlet": "ターボへの吸気管", "Airbox": "エアボックス"}, group=G4)
 qm.catalog("exhaust", "排気", "左右 3 本ずつの管を集合部でまとめ、ギアボックスの上のタービンへ。出口はテールパイプ 1 本。",
            parts=["Exhaust_", "Tailpipe"], labels={"Exhaust_PrimaryL1": "マニホールド", "Exhaust_CollectorL": "集合部",
                                                    "Exhaust_ToTurboR": "タービンへの管", "Tailpipe": "テールパイプ"}, group=G4)

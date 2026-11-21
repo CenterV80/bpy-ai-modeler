@@ -862,7 +862,7 @@ def differential(name: str = "Diff", case_r: float = 0.060, case_len: float = 0.
 # 推定: ここに並べた位置と寸法はすべて推定（公表されていない）。ミリで書き、使うときに MM を掛ける
 LAYOUT = {
     "tub": [(-350, 300, 360), (0, 420, 440), (500, 540, 500), (1050, 620, 570), (1500, 700, 600),
-            (1850, 720, 610), (2150, 720, 600), (2420, 640, 560)],     # (y, 幅, 高さ)。下端は plank_z + 30mm
+            (1850, 720, 610), (2150, 720, 600), (2500, 620, 550)],     # (y, 幅, 高さ)。下端は plank_z + 30mm。後ろの隔壁にエンジンを直接留める
     "cockpit": (1050, 1850),          # コクピットの開口（前・後ろの y）
     "fuel_cell": (1880, 2240),        # 燃料タンクの前後
     "engine_front": 2500,             # エンジンの前のカバーの前面
@@ -927,13 +927,14 @@ def survival_cell(name: str = "Cell", mats=None):
     qm.solidify(shell, 0.008)
     parts = [shell]
     c0, c1 = LAYOUT["cockpit"]
-    for tag, ys in (("FrontDeck", [y for y in (-350, 0, 500, c0)]), ("RearDeck", [c1, 2150, 2420])):
+    y_end = LAYOUT["tub"][-1][0]
+    for tag, ys in (("FrontDeck", [y for y in (-350, 0, 500, c0)]), ("RearDeck", [c1, 2150, y_end])):
         st = []
         for y in ys:
             w, top = tub_section(y)
             st.append((y * MM, 0, (top - 10) * MM, w * MM, 0.010, 0.004))
         parts.append(body(f"{name}_{tag}", st, carbon, n=2))
-    for tag, y in (("FrontBulkhead", -350), ("RearBulkhead", 2420)):
+    for tag, y in (("FrontBulkhead", -350), ("RearBulkhead", y_end)):
         w, top = tub_section(y)
         b = qm.box(f"{name}_{tag}", ((w - 16) * MM, 0.010, (top - z0 * 1000 - 18) * MM), origin="bottom",
                    location=(0, y * MM + (0.005 if y < 0 else -0.005), z0 + 0.008), material=carbon)
@@ -1521,6 +1522,21 @@ def mgu_k(name: str = "MGUK", mats=None):
     return parts
 
 
+def airbox(name: str = "Airbox", stations=None, wall: float = 0.0025, mats=None):
+    """エアボックス（ドライバーの頭の上、ロールフープの吸気口から、燃料タンクとエンジンの上を通って、ターボの吸い口へ向かう吸気の管）。
+    stations = [(y, 下端 z, 幅, 高さ, 角の半径), ...]（メートル、前から後ろへ）。中空（HOLLOW のとき）。戻り値 [管]"""
+    st = stations or [(1.880, 0.785, 0.200, 0.160, 0.050), (2.100, 0.728, 0.210, 0.145, 0.055), (2.400, 0.697, 0.190, 0.125, 0.055),
+                      (2.600, 0.703, 0.110, 0.100, 0.045), (2.705, 0.705, 0.092, 0.090, 0.044)]
+    carbon = _m(mats, "carbon")
+    duct = body(name, [(y, 0, z, w, h, r) for y, z, w, h, r in st], carbon, n=4)
+    if HOLLOW:
+        inner = [(st[0][0] - 0.02, 0, st[0][1] + wall, st[0][2] - 2 * wall, st[0][3] - 2 * wall, st[0][4] - wall)]
+        inner += [(y, 0, z + wall, w - 2 * wall, h - 2 * wall, r - wall) for y, z, w, h, r in st]
+        inner.append((st[-1][0] + 0.02,) + inner[-1][1:])
+        qm.cut(duct, [body("_abi", inner, None, n=4)])
+    return [duct]
+
+
 def radiator(name: str, length: float = 0.50, height: float = 0.36, thickness: float = 0.05, mats=None):
     """ラジエーター・インタークーラー・オイルクーラーのコア（細かい格子）と前後のタンク、入口・出口の口。
     原点がコアの中心、Y が長さ、Z が高さ、X が厚み（空気の流れ）。入口は後ろのタンクの上、出口は前のタンクの下。戻り値はリスト"""
@@ -2046,7 +2062,7 @@ HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でその
 
 シャシー全体（車体を除く。位置は f1.LAYOUT のミリの値。図鑑の作例 skills/bpy-modeling/examples/f1_chassis_catalog_mm.py）
 - f1.survival_cell() / f1.tub_section(y_mm) → (幅, 上端 z)   足もとからエンジンの前までの殻・上ぶた・隔壁・ダッシュボードの梁
-- f1.roll_hoop(y, top_z) / f1.halo_frame(rear_y, front_y, half_w, top_z) / f1.side_impact(name, p_in, p_out)
+- f1.roll_hoop(y, top_z) / f1.halo_frame(rear_y, front_y, half_w, top_z) / f1.side_impact(name, p_in, p_out) / f1.airbox()（ロールフープの吸気口からターボへ）
 - コクピット: f1.seat(path=[(y, z)...]) / f1.harness(buckle) / f1.headrest(y0, y1) /
   f1.steering_wheel()（原点・+Y がドライバー側）/ f1.steering_column(name, [点...]) / f1.pedal(name, pivot, pad) /
   f1.master_cylinder(name, front, back) / f1.fire_extinguisher(y0)
