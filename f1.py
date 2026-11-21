@@ -413,7 +413,10 @@ def damper(name: str, p0, p1, body_r: float = 0.022, bore: float = 0.007, mats=N
     turns = 7
     spring = qm.tube(f"{name}_Spring", qm.helix(body_r + 0.005, (z1 - z0) / turns, turns, per_turn=12, z0=z0),
                      radius=0.0035, seg=8, material=spring_mat)
-    parts = [body, rod, perch1, perch2, spring]
+    # バンプラバー（ロッドに通したゴム。縮みきる手前で当たる）
+    packer = qm.ring(f"{name}_Packer", body_r * 0.55, body_r * 0.3, 0.010, seg=16, location=(0, 0, e + L * 0.55 + 0.001),
+                     material=qm.material("F1_Rubber", (0.15, 0.15, 0.16), metal=0.0, rough=0.8))
+    parts = [body, rod, perch1, perch2, spring, packer]
     for tag, z, xdir in (("A", 0.0, (0, 0, 1)), ("B", L, (0, 0, -1))):
         re_ = rod_end(f"{name}_RodEnd{tag}", bore, shank=0.012, mats=mats)
         qm.orient(re_, origin=(0, 0, z), x_axis=(0, 0, -1) if tag == "A" else (0, 0, 1), z_axis=(1, 0, 0))
@@ -423,21 +426,31 @@ def damper(name: str, p0, p1, body_r: float = 0.022, bore: float = 0.007, mats=N
     return parts
 
 
-def rocker(name: str, pivot, arms, normal=(1, 0, 0), thickness: float = 0.012, mats=None):
+def rocker(name: str, pivot, arms, normal=(1, 0, 0), thickness: float = 0.012, clevis: bool = False, mats=None):
     """ロッカー（ベルクランク）。pivot を軸（normal 方向）に、arms の各点へ腕を伸ばす。
-    arms は腕の先の点（車の座標）。腕の先と軸に穴のあるボスが付く。戻り値はリスト"""
+    arms は腕の先の点（車の座標）。腕の先と軸に穴のあるボスが付く。軸のボスには針状ころ軸受を 2 個入れる。
+    clevis=True なら腕の先のボスを作らず、腕を手前で止める（ロッドエンドを二股の金具で受ける）。戻り値はリスト"""
     alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
     pv, n = Vector(pivot), Vector(normal).normalized()
-    parts = [qm.ring(f"{name}_Hub", 0.020, 0.008, thickness * 1.6, seg=16, origin="center", material=alu)]
+    hub_h = thickness * 1.6
+    parts = [qm.ring(f"{name}_Hub", 0.020, 0.012, hub_h, seg=16, origin="center", material=alu)]
     qm.orient(parts[0], origin=pv, x_axis=n.orthogonal(), z_axis=n)
+    for k, sgn in enumerate((-1, 1)):                     # 軸の針状ころ軸受（外輪だけ。中のころは省略）
+        b = qm.ring(f"{name}_HubBrg{k + 1}", 0.012, 0.008, hub_h * 0.45, seg=16, origin="center", material=steel)
+        qm.orient(b, origin=pv + n * sgn * hub_h * 0.25, x_axis=n.orthogonal(), z_axis=n)
+        parts.append(b)
     for k, end in enumerate(arms):
         e = Vector(end)
         e = e - n * n.dot(e - pv)            # 腕の先を、軸に垂直な面に乗せる
-        web = qm.sweep(f"{name}_Arm{k + 1}", [pv, e], [(-0.009, -thickness / 2), (0.009, -thickness / 2),
-                                                        (0.009, thickness / 2), (-0.009, thickness / 2)], up=n, material=alu)
-        boss = qm.ring(f"{name}_Boss{k + 1}", 0.013, 0.006, thickness * 1.3, seg=16, origin="center", material=alu)
-        qm.orient(boss, origin=e, x_axis=n.orthogonal(), z_axis=n)
-        parts += [web, boss]
+        e2 = e - (e - pv).normalized() * (0.014 if clevis else 0.0)
+        web = qm.sweep(f"{name}_Arm{k + 1}", [pv, e2], [(-0.009, -thickness / 2), (0.009, -thickness / 2),
+                                                         (0.009, thickness / 2), (-0.009, thickness / 2)], up=n, material=alu)
+        parts.append(web)
+        if not clevis:
+            boss = qm.ring(f"{name}_Boss{k + 1}", 0.013, 0.006, thickness * 1.3, seg=16, origin="center", material=alu)
+            qm.orient(boss, origin=e, x_axis=n.orthogonal(), z_axis=n)
+            parts.append(boss)
     return parts
 
 
@@ -457,42 +470,80 @@ def brake_disc(name: str, front: bool = True, vanes: int = 48, mats=None):
         rm = (ro + ri) / 2
         _box_into(bm, (rm * math.cos(ang), rm * math.sin(ang), 0), (ro - ri - 0.004, 0.003, T - 2 * face + 0.0004), ang)
     disc = qm.obj(name, bm, carbon)
-    bell = qm.ring(f"{name}_Bell", ri + 0.004, 0.044, 0.006, seg=24, origin="center",   # ハブまで届く取り付けのベル
+    bell = qm.ring(f"{name}_Bell", ri + 0.012, 0.044, 0.006, seg=24, origin="center",   # ハブまで届く取り付けのベル
                    material=_mk(mats, "alu", (0.75, 0.76, 0.78)))
-    return [disc, bell]
+    parts = [disc, bell]
+    # ディスクの内周の切り欠きにはまり、ベルの回転を伝えるボビン（ディスクが熱で伸びても動けるように浮かせて留める。数は推定）
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    for k in range(12):
+        a = 2 * math.pi * (k + 0.5) / 12
+        parts.append(qm.cylinder(f"{name}_Bobbin{k + 1}", 0.0035, T * 0.9, seg=12, origin="center",
+                                 location=((ri + 0.006) * math.cos(a), (ri + 0.006) * math.sin(a), 0), material=steel))
+    return parts
+
+
+CALIPER = {"w": 0.030, "h": 0.062, "pad": 0.018, "backing": 0.004}   # 本体の厚み・高さ、パッドの摩擦材と裏板の厚み（推定）
+
+
+def caliper_body_offset(front: bool = True):
+    """ディスクの中心から、キャリパーの片側の本体の中心までの (軸方向の距離, 半径)"""
+    D, T = BRAKE["front" if front else "rear"]
+    c = CALIPER
+    return T / 2 + c["pad"] + c["backing"] + 0.001 + c["w"] / 2, D / 2 - 0.024
 
 
 def caliper(name: str, front: bool = True, span_deg: float = 52, mats=None):
-    """6 ピストンの一体型キャリパー（ディスクをはさむ内外 2 つの本体と、外周をまたぐブリッジ、ピストン 3 つずつ）。
+    """6 ピストンの一体型（モノブロック）キャリパー。ディスクをはさむ内外の本体と外周のブリッジを 1 つの部品にし、
+    ディスクの側にピストンの穴を 3 つずつ掘る。ピストンが裏板つきのパッドをディスクへ押す。パッドは上から通すピンで止める。
     ディスクの軸 Z、中心が原点で、+X 方向（角度 0）を中心に置く。戻り値はリスト"""
     D, T = BRAKE["front" if front else "rear"]
     ro = D / 2
     red = _mk(mats, "caliper", (0.75, 0.05, 0.05), metal=0.4, rough=0.35)
     steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
-    rc, h, w = ro - 0.024, 0.062, 0.030
-    parts = []
-    for tag, zc in (("In", -(T / 2 + w / 2 + 0.003)), ("Out", T / 2 + w / 2 + 0.003)):
+    ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
+    padm = _mk(mats, "carbonbrake", (0.06, 0.06, 0.065), metal=0.1, rough=0.7)
+    C = CALIPER
+    w, h = C["w"], C["h"]
+    zoff, rc = caliper_body_offset(front)
+    face = zoff - w / 2                                   # 本体のディスク側の面
+
+    def arc_loft(nm, r0, rad_h, z0, z1, frac, mat, n=9):
         secs = []
-        for k in range(9):
-            a = math.radians(-span_deg / 2 + span_deg * k / 8)
+        for k in range(n):
+            a = math.radians(span_deg * frac * (-0.5 + k / (n - 1)))
             ca, sa = math.cos(a), math.sin(a)
-            secs.append([((rc + x) * ca, (rc + x) * sa, zc + z) for x, z in rrect(h, w, 0.008, 2)])
-        parts.append(qm.loft(f"{name}_{tag}", secs, material=red))
+            secs.append([((r0 + x) * ca, (r0 + x) * sa, (z0 + z1) / 2 + z) for x, z in rrect(rad_h, z1 - z0, 0.004, 2)])
+        return qm.loft(nm, secs, material=mat)
+
+    body = arc_loft(name, rc, h, face, face + w, 1.0, red)
+    half_in = arc_loft(f"{name}_tmpIn", rc, h, -face - w, -face, 1.0, red)
+    bridge = arc_loft(f"{name}_tmpBridge", ro + 0.012, 0.020, -face - w, face + w, 0.7, red, n=5)
+    qm.union(body, [half_in, bridge])
+    parts = [body]
+    cut = []
+    for side in (-1, 1):
         for i, frac in enumerate((-0.3, 0.0, 0.3)):
             a = math.radians(span_deg * frac)
-            out = 1 if zc > 0 else -1
-            parts.append(qm.cylinder(f"{name}_{tag}_Piston{i + 1}", 0.013, 0.006, seg=16, origin="bottom",
-                                     location=(rc * math.cos(a), rc * math.sin(a), zc + out * (w / 2 - 0.001)), material=red))
-            if out < 0:
-                qm.pivot(parts[-1], (rc * math.cos(a), rc * math.sin(a), zc - w / 2), (180, 0, 0))
-    secs = []
-    for k in range(5):
-        a = math.radians(-span_deg * 0.35 + span_deg * 0.7 * k / 4)
-        secs.append([((ro + 0.012 + x) * math.cos(a), (ro + 0.012 + x) * math.sin(a), z)
-                     for x, z in rrect(0.020, T + 2 * w + 0.006, 0.006, 2)])
-    parts.append(qm.loft(f"{name}_Bridge", secs, material=red))
+            p = (rc * math.cos(a), rc * math.sin(a))
+            c = qm.cylinder(f"_bore{side}{i}", 0.0135, 0.016, seg=24, origin="bottom", location=(p[0], p[1], 0))
+            c.matrix_world = fasten.frame((p[0], p[1], side * (face - 0.001)), (0, 0, side))
+            cut.append(c)
+            pst = qm.cylinder(f"{name}_Piston{'In' if side < 0 else 'Out'}{i + 1}", 0.013, 0.014, seg=24, material=ti)
+            pst.matrix_world = fasten.frame((p[0], p[1], side * (face - 0.001)), (0, 0, side))
+            parts.append(pst)
+    pin_r = rc + h / 2 - 0.004                              # パッドの上の縁を通るピン
+    cut.append(qm.cylinder("_pinhole", 0.0032, 2 * (face + w) + 0.002, seg=12, origin="center", location=(pin_r, 0, 0)))
+    qm.cut(body, cut)
+    for side, tag in ((-1, "In"), (1, "Out")):
+        z_bk = side * (face - 0.001 - C["backing"] / 2)
+        z_pd = side * (T / 2 + 0.0005 + C["pad"] / 2)
+        bk = arc_loft(f"{name}_PadPlate{tag}", rc + 0.002, h - 0.004, z_bk - C["backing"] / 2, z_bk + C["backing"] / 2, 0.86, ti)
+        pd = arc_loft(f"{name}_Pad{tag}", rc - 0.002, h - 0.012, z_pd - C["pad"] / 2, z_pd + C["pad"] / 2, 0.82, padm)
+        parts += [bk, pd]
+    parts.append(qm.cylinder(f"{name}_PadPin", 0.003, 2 * (face + w) + 0.006, seg=12, origin="center", location=(pin_r, 0, 0), material=steel))
+    parts.append(qm.ring(f"{name}_PadPinClip", 0.0055, 0.003, 0.002, seg=12, origin="bottom", location=(pin_r, 0, face + w + 0.0005), material=steel))
     parts.append(qm.cylinder(f"{name}_Bleed", 0.004, 0.014, seg=8, axis="X",
-                             location=(ro + 0.024 + 0.007, 0, T / 2 + w / 2), material=steel))
+                             location=(rc + h / 2 + 0.006, 0.012, face + w / 2), material=steel))
     return parts
 
 
@@ -509,6 +560,8 @@ def hub_and_nut(name: str, mats=None):
                                  material=steel))
     nut = qm.ring(f"{name}_Nut", 0.038, 0.020, 0.028, seg=24, location=(0, 0, 0.020), material=_mk(mats, "nut", (0.8, 0.65, 0.1), 0.9, 0.3))
     parts.append(nut)
+    # ナットの抜け止め（規定で、ナットが緩んでもホイールが外れないようにする仕組みが求められる。形は推定）
+    parts.append(qm.ring(f"{name}_Retainer", 0.024, 0.018, 0.004, seg=24, location=(0, 0, 0.048), material=steel))
     for k in range(6):
         a = 2 * math.pi * (k + 0.5) / 6
         parts.append(qm.box(f"{name}_NutLug{k + 1}", (0.014, 0.010, 0.020), origin="bottom",
@@ -540,22 +593,32 @@ def rim(name: str, front: bool = True, spokes: int = 10, mats=None):
     return parts
 
 
-def upright(name: str, center, upper, lower, steer, axis=(-1, 0, 0), mats=None):
+def upright(name: str, center, upper, lower, steer, axis=(-1, 0, 0), clevis: bool = False, mats=None):
     """アップライト（軸受のハウジングと、上・下・ステア用の 3 本の腕。腕の先に球面軸受の受け）。
-    center は軸受の中心、axis はホイールの外向き。upper / lower / steer は腕の先の点。戻り値はリスト"""
+    center は軸受の中心、axis はホイールの外向き。upper / lower / steer は腕の先の点。
+    ハウジングの中に、ハブを支える玉軸受を 2 個（内と外）入れる。
+    clevis=True なら腕の先の受け（輪）を作らず、腕を手前で止める（f1.fasten.rod_end_joint の二股の金具で受ける）。
+    戻り値はリスト"""
     ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
     c, ax = Vector(center), Vector(axis).normalized()
-    house = qm.ring(f"{name}_Housing", 0.068, 0.042, 0.075, seg=24, origin="center", material=ti)
+    house = qm.ring(f"{name}_Housing", 0.068, 0.056, 0.075, seg=24, origin="center", material=ti)
     qm.orient(house, origin=c, x_axis=ax.orthogonal(), z_axis=ax)
     parts = [house]
+    for tag, dz in (("In", -0.0275), ("Out", 0.0275)):     # 玉軸受（内輪 r42・外輪 r56・幅 18mm。寸法は推定）
+        brg = qm.ball_bearing(f"{name}_Brg{tag}", 0.084, 0.112, 0.018, balls=16, material=steel)
+        qm.orient(brg, origin=c + ax * dz, x_axis=ax.orthogonal(), z_axis=ax)
+        parts += brg
     for tag, p in (("Upper", upper), ("Lower", lower), ("Steer", steer)):
         p = Vector(p)
         start = c + (p - c).normalized() * 0.055
-        parts.append(qm.sweep(f"{name}_{tag}Arm", [start, (start + p) / 2 - ax * 0.01, p],
+        end = p - (p - start).normalized() * (0.010 if clevis else 0.0)
+        parts.append(qm.sweep(f"{name}_{tag}Arm", [start, (start + end) / 2 - ax * 0.01, end],
                               [(-0.012, -0.016), (0.012, -0.016), (0.012, 0.016), (-0.012, 0.016)], up=ax, material=ti))
-        boss = qm.ring(f"{name}_{tag}Boss", 0.016, 0.009, 0.022, seg=16, origin="center", material=ti)
-        qm.orient(boss, origin=p, x_axis=ax, z_axis=(0, 0, 1) if tag != "Steer" else (0, 1, 0))
-        parts.append(boss)
+        if not clevis:
+            boss = qm.ring(f"{name}_{tag}Boss", 0.016, 0.009, 0.022, seg=16, origin="center", material=ti)
+            qm.orient(boss, origin=p, x_axis=ax, z_axis=(0, 0, 1) if tag != "Steer" else (0, 1, 0))
+            parts.append(boss)
     return parts
 
 
@@ -2102,3 +2165,6 @@ HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でその
 
 # 実物どおりの部品の分け方で作る V6 エンジン（ブーリアンを使う。f1_engine.py）
 from f1_engine import *  # noqa: E402,F401,F403
+
+# 留め具（ボルト・ナット・座金・スペーサー）とクレビス（f1_fasten.py）。f1.fasten.xxx で使う
+import f1_fasten as fasten  # noqa: E402,F401

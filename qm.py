@@ -692,12 +692,16 @@ def _boolean(target, others, op: str):
     dg = bpy.context.evaluated_depsgraph_get()
     me = bpy.data.meshes.new_from_object(target.evaluated_get(dg))
     old = target.data
-    target.modifiers.remove(mod)
     if len(me.polygons) == 0 and len(old.polygons) > 0 and op != "INTERSECT":
         # ブーリアンが失敗して形が消えた（道すじが折り返す管など）。元の形のまま残し、知らせる
         print(f"注意: {target.name} のブーリアン（{op}）に失敗したので、元の形のまま残しました")
         bpy.data.meshes.remove(me)
+        target.modifiers.remove(mod)
         me = None
+    else:
+        # 評価した形には、ほかのモディファイア（厚み付け・面取りなど）も焼き込まれている。二重にかからないよう全部外す
+        for md in list(target.modifiers):
+            target.modifiers.remove(md)
     if me is None:
         for o in others:
             m_ = o.data

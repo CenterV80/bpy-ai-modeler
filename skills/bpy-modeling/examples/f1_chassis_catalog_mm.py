@@ -89,6 +89,15 @@ bb = P(-80, 640 - 120 * t, 220)
 qm.tube("BalanceBar", [bb + Vector((-0.045, 0, 0)), bb + Vector((0.045, 0, 0))], radius=0.006, seg=10, material=titan)
 for k, dx in enumerate((-35, 35)):
     f1.master_cylinder(f"Master{k + 1}", P(-80 + dx, 432, 220), bb + Vector((dx * MM, 0, 0)), mats=mats)
+# ブレーキフルードのリザーバー（前後の系統に 1 つずつ。ペダルボックスの前の板の上に。形と位置は推定）
+for k, dx in enumerate((-35, 35)):
+    rx = -80 + dx
+    qm.lathe(f"BrakeReservoir{k + 1}", [(0.012, 0.0), (0.016, 0.004), (0.016, 0.046), (0.012, 0.050)], seg=16,
+             material=qm.material("F1_Reservoir", (0.85, 0.85, 0.80), metal=0.0, rough=0.4), location=tuple(P(rx, 405, 342)))
+    qm.cylinder(f"BrakeReservoir{k + 1}_Cap", 0.010, 0.008, seg=16, location=tuple(P(rx, 405, 392)), material=titan)
+    qm.box(f"BrakeReservoir{k + 1}_Bracket", (0.036, 0.016, 0.004), origin="bottom", location=tuple(P(rx, 412, 338)), material=titan)
+    qm.tube(f"BrakeReservoir{k + 1}_Hose", [P(rx, 405, 343), P(rx, 405, 300), P(rx, 437, 260), P(rx, 437, 237)], radius=0.003, seg=8,
+            material=qm.material("F1_Hose", (0.10, 0.10, 0.12), metal=0.0, rough=0.7))
 qm.cylinder("PedalThrottle_Sensor", 0.016, 0.03, seg=12, axis="X", location=tuple(P(80 + 40, 640, 95)), material=mats["titanium"])
 
 f1.fire_extinguisher("Extinguisher", y0=1.00, length=0.30, r=0.05, mats=mats)
@@ -209,8 +218,9 @@ for s, tg in ((-1, "FL"), (1, "FR")):
     qm.orient(f1.caliper(f"Caliper_{tg}", True, mats=mats), origin=DC, x_axis=cal_dir, z_axis=OUT)
     f1.brake_duct(f"BrakeDuct_{tg}", DC, OUT, cal_dir, front=True, mats=mats)
     upper, lower, steer = Vector((s * 0.70, 0.0, C.z + 0.165)), Vector((s * 0.72, 0.0, C.z - 0.165)), Vector((s * 0.70, -0.11, C.z + 0.01))
-    f1.upright(f"Upright_{tg}", U, upper, lower, steer, axis=OUT, mats=mats)
-    cal_in = DC - OUT * (f1.BRAKE["front"][1] / 2 + 0.018) + cal_dir * 0.14
+    f1.upright(f"Upright_{tg}", U, upper, lower, steer, axis=OUT, clevis=True, mats=mats)
+    zoff, rc = f1.caliper_body_offset(True)
+    cal_in = DC - OUT * zoff + cal_dir * rc
     CORNER[tg] = {"cal": cal_in, "lower": lower, "upper": upper, "mid": Mf - OUT * (TWF * 0.95 * 0.05)}
     qm.sweep(f"CaliperBracket_{tg}", [U + cal_dir * 0.06, cal_in], [(-0.010, -0.014), (0.010, -0.014), (0.010, 0.014), (-0.010, 0.014)],
              up=OUT, material=titan)
@@ -218,8 +228,7 @@ for s, tg in ((-1, "FL"), (1, "FR")):
     f1.wishbone(f"UpperArm_{tg}", (s * 0.20, -0.18, 0.43), (s * 0.21, 0.20, 0.44), upper, mats=mats)
     f1.pushrod(f"Pushrod_{tg}", lower + Vector((-s * 0.07, 0.02, 0.03)), (s * 0.17, 0.05, 0.58), mats=mats)
     TOP = 0.505
-    qm.box(f"RockerMount_{tg}", (0.05, 0.05, 0.05), location=(s * 0.12, 0.05, TOP - 0.01), material=mats["carbon"])
-    f1.rocker(f"Rocker_{tg}", (s * 0.12, 0.05, 0.56), [(s * 0.17, 0.05, 0.58), (s * 0.08, 0.05, 0.62)], normal=(0, 1, 0), mats=mats)
+    f1.rocker(f"Rocker_{tg}", (s * 0.12, 0.05, 0.56), [(s * 0.17, 0.05, 0.58), (s * 0.08, 0.05, 0.62)], normal=(0, 1, 0), clevis=True, mats=mats)
     qm.box(f"DamperMount_{tg}", (0.04, 0.04, 0.10), location=(s * 0.08, -0.27, TOP - 0.01), material=mats["carbon"])
     f1.damper(f"Damper_{tg}", (s * 0.08, -0.25, 0.60), (s * 0.08, 0.04, 0.62), mats=mats)
     f1.pushrod(f"TrackRod_{tg}", (s * 0.20, -0.11, 0.30), steer, mats=mats)
@@ -250,21 +259,18 @@ for side, tag in ((-1, "L"), (1, "R")):
     qm.orient(f1.caliper(f"Caliper_R{tag}", False, mats=mats), origin=DC, x_axis=cal_dir, z_axis=OUT)
     f1.brake_duct(f"BrakeDuct_R{tag}", DC, OUT, cal_dir, front=False, mats=mats)
     upper, lower, toe = P(s * 690, WB, WZ + 165), P(s * 700, WB, WZ - 160), P(s * 690, WB + 110, WZ + 5)
-    f1.upright(f"Upright_R{tag}", U, upper, lower, toe, axis=OUT, mats=mats)
-    cal_in = DC - OUT * ((32 / 2 + 18) * MM) + cal_dir * (115 * MM)
+    f1.upright(f"Upright_R{tag}", U, upper, lower, toe, axis=OUT, clevis=True, mats=mats)
+    zoff, rc = f1.caliper_body_offset(False)
+    cal_in = DC - OUT * zoff + cal_dir * rc
     CORNER["R" + tag] = {"cal": cal_in, "lower": lower, "upper": upper, "mid": M - OUT * (RIM_W * 0.05 * MM)}
     qm.sweep(f"CaliperBracket_R{tag}", [U + cal_dir * (60 * MM), cal_in],
              [(-10 * MM, -14 * MM), (10 * MM, -14 * MM), (10 * MM, 14 * MM), (-10 * MM, 14 * MM)], up=OUT, material=titan)
     f1.driveshaft(f"Driveshaft_R{tag}", P(s * 150, WB, WZ), U + OUT * (25 * MM), mats=mats)
-    for nm, y, z in (("LF", 3230, 140), ("LR", 3530, 160), ("UF", 3240, 440), ("UR", 3500, 420)):
-        mount(f"Mount_{nm}_R{tag}", s * 140, y, z - 20)
     f1.wishbone(f"LowerArm_R{tag}", P(s * 150, 3230, 140), P(s * 150, 3530, 160), lower, mats=mats)
     f1.wishbone(f"UpperArm_R{tag}", P(s * 150, 3240, 440), P(s * 150, 3500, 420), upper, mats=mats)
-    mount(f"Mount_Toe_R{tag}", s * 140, 3510, WZ - 15)
     f1.pushrod(f"ToeLink_R{tag}", P(s * 150, 3510, WZ + 5), toe, mats=mats)
     f1.pushrod(f"Pushrod_R{tag}", lower + Vector((-s * 70 * MM, 20 * MM, 35 * MM)), P(s * 110, 3330, 545), mats=mats)
-    mount(f"RockerMount_R{tag}", s * 70, 3330, 485)
-    f1.rocker(f"Rocker_R{tag}", P(s * 70, 3330, 530), [P(s * 110, 3330, 545), P(s * 45, 3330, 585)], normal=(0, 1, 0), mats=mats)
+    f1.rocker(f"Rocker_R{tag}", P(s * 70, 3330, 530), [P(s * 110, 3330, 545), P(s * 45, 3330, 585)], normal=(0, 1, 0), clevis=True, mats=mats)
     mount(f"DamperMount_R{tag}", s * 45, 3080, 465, h=110)
     f1.damper(f"Damper_R{tag}", P(s * 45, 3095, 580), P(s * 45, 3320, 590), mats=mats)
 
@@ -485,6 +491,74 @@ nz = f1.EST["plank_z"] + 0.03 + 0.005 + 0.355 / 2
 for k, (x, z) in enumerate([(s * 0.143, nz + t * 0.10) for s in (-1, 1) for t in (-1, 1)]):
     qm.orient(qm.bolt(f"NoseCrash_Bolt{k + 1}", "M8", 0.03, material=steel), origin=(x, -0.362, z), x_axis=(1, 0, 0), z_axis=(0, -1, 0))
 
+# =========================================================== 留め具（ボルト・ナット・座金・スペーサー・クレビス）
+FX = f1.fasten
+# ---- サスペンション：ロッドエンドはすべて二股の金具（クレビス）にボルト 1 本で留め、ボールの両側にスペーサー。
+#      胴体側の金具はサバイバルセル・ギアボックスへボルト 2 本で留める（カーボンには金属のねじを埋める）
+for tg in ("FL", "FR", "RL", "RR"):
+    front = tg[0] == "F"
+    body = ["Cell"] if front else ["Gearbox"]
+    for arm in ("LowerArm", "UpperArm"):
+        for e in ("F", "R"):
+            FX.rod_end_joint(f"{arm}_{tg}_RodEnd{e}", host=body)
+        FX.rod_end_joint(f"{arm}_{tg}_Outer", host=[f"Upright_{tg}_{'Upper' if arm == 'UpperArm' else 'Lower'}Arm"],
+                         bolted=False, outward=True, length=0.022)
+    FX.rod_end_joint(f"Pushrod_{tg}_RodEndA", host=[f"LowerArm_{tg}_Front", f"LowerArm_{tg}_Rear"], bolted=False)
+    FX.rod_end_joint(f"Pushrod_{tg}_RodEndB", host=[f"Rocker_{tg}_Arm1"], bolted=False, outward=True, length=0.024)
+    FX.rod_end_joint(f"Damper_{tg}_RodEndA", host=[f"DamperMount_{tg}"])
+    FX.rod_end_joint(f"Damper_{tg}_RodEndB", host=[f"Rocker_{tg}_Arm2"], bolted=False, outward=True, length=0.024)
+    link = "TrackRod" if front else "ToeLink"
+    FX.rod_end_joint(f"{link}_{tg}_RodEndA", host=[f"Rack_Boot{tg[1]}"] if front else body, bolted=not front)
+    FX.rod_end_joint(f"{link}_{tg}_RodEndB", host=[f"Upright_{tg}_SteerArm"], bolted=False, outward=True, length=0.022)
+    # ロッカーの軸：ハブの針状ころ軸受を、二股の金具と軸のボルトで受ける（金具は胴体へボルト留め）
+    rk = bpy.data.objects[f"Rocker_{tg}_Hub"]
+    rc_ = sum((rk.matrix_world @ v.co for v in rk.data.vertices), Vector()) / len(rk.data.vertices)
+    FX.joint(f"Rocker_{tg}_Pivot", rc_, (0, 1, 0), 0.012 * 1.6 / 2, 0.020, "M10", host=body, out=(0, 0, -1), spacer=False)
+for nm, hosts in (("FrontHeave", ["HeaveLink_FL", "HeaveLink_FR"]), ("RearHeave", ["HeaveLink_RL", "HeaveLink_RR"])):
+    for e in ("A", "B"):
+        FX.rod_end_joint(f"{nm}_RodEnd{e}", host=hosts, bolted=False)
+# ダンパーの台・アンチロールバーの台を胴体へ（ボルト 2 本ずつ、上から）
+for nm in ["DamperMount_FL", "DamperMount_FR", "FrontARB_MountL", "FrontARB_MountR"]:
+    ob = bpy.data.objects[nm]
+    lo_, hi_ = [min((ob.matrix_world @ v.co)[i] for v in ob.data.vertices) for i in range(3)], [max((ob.matrix_world @ v.co)[i] for v in ob.data.vertices) for i in range(3)]
+    cx, cy = (lo_[0] + hi_[0]) / 2, (lo_[1] + hi_[1]) / 2
+    for k, dy in enumerate((-1, 1)):
+        q = Vector((cx, cy + dy * (hi_[1] - lo_[1]) * 0.3, lo_[2] + 0.008))
+        FX.fasten(f"{nm}_Bolt{k + 1}", q, (0, 0, -1), 0.008 + 0.002, "M6", nut=False, washer=True, drill=("Cell",), insert=True)
+for nm in ["DamperMount_RL", "DamperMount_RR", "ARBMount_L", "ARBMount_R"]:
+    ob = bpy.data.objects[nm]
+    lo_, hi_ = [min((ob.matrix_world @ v.co)[i] for v in ob.data.vertices) for i in range(3)], [max((ob.matrix_world @ v.co)[i] for v in ob.data.vertices) for i in range(3)]
+    cx, cy = (lo_[0] + hi_[0]) / 2, (lo_[1] + hi_[1]) / 2
+    for k, dy in enumerate((-1, 1)):
+        FX.fasten(f"{nm}_Bolt{k + 1}", Vector((cx, cy + dy * (hi_[1] - lo_[1]) * 0.3, hi_[2])), (0, 0, -1), hi_[2] - lo_[2] + 0.002, "M6",
+                  nut=False, washer=True, drill=("Gearbox",))
+
+# ---- ブレーキとハブ：キャリパーを留めるボルト 2 本、ディスクのベルをハブのつばへ 6 本、ハブのつば
+for tg in ("FL", "FR", "RL", "RR"):
+    front = tg[0] == "F"
+    D_, T_ = f1.BRAKE["front" if front else "rear"]
+    s = -1 if tg[1] == "L" else 1
+    OUT = Vector((s, 0, 0))
+    disc = bpy.data.objects[f"Disc_{tg}"]
+    DCw = disc.matrix_world.translation.copy()
+    cal_dir = Vector((0, 0.5, 0.866)) if front else Vector((0, -0.5, 0.866))
+    zoff, rc = f1.caliper_body_offset(front)
+    tang = OUT.cross(cal_dir).normalized()
+    q0 = DCw - OUT * (zoff + f1.CALIPER["w"] / 2) + cal_dir * rc
+    lugb = qm.box(f"CaliperBracket_{tg}_Lug", (0.075, 0.024, 0.012), origin="center", material=titan)   # キャリパーの内側の面に当てる板
+    lugb.matrix_world = FX.frame(q0 - OUT * 0.006, OUT, tang)
+    for k, u in enumerate((-1, 1)):
+        q = q0 + tang * u * 0.028
+        FX.fasten(f"Caliper_{tg}_MountBolt{k + 1}", q - OUT * 0.012, OUT, 0.012 + f1.CALIPER["w"] * 0.6, "M10", nut=False, washer=True)
+    fl = qm.ring(f"Hub_{tg}_DiscFlange", 0.062, 0.042, 0.008, seg=24, origin="bottom", material=titan)
+    qm.orient(fl, origin=DCw - OUT * 0.011, x_axis=(0, 1, 0), z_axis=OUT)
+    FX.bolt_circle(f"Disc_{tg}_BellBolt", DCw + OUT * 0.003, -OUT, 0.053, 6, 0.014, "M6", start=math.pi / 6, nut=True, washer=False,
+                   x_axis=(0, 1, 0))
+
+# ---- 予約した穴を、部品ごとにまとめてあける
+print("穴をあけた部品:", FX.drill_all())
+print("留め具の数:", FX.report())
+
 # =========================================================== 検査
 qm.expect("*", floating=True)        # 車体とフロアがないので、全体は地面から浮いてよい（部品どうしのつながりは見る）
 qm.expect("Disc_FL", size=(32 * MM, 328 * MM, 328 * MM), tol=0.02)
@@ -566,16 +640,19 @@ qm.catalog("cooling", "冷却（ラジエーター・インタークーラー・
                    "WaterPipeColdR": "冷却水（帰り）", "ChargePipe1": "圧縮空気の管", "OilLineFeed": "オイルの管", "HeaderTank": "ヘッダータンク"}, group=G5)
 qm.catalog("oiltank", "オイルタンク", "ドライサンプのオイルをためるタンク。燃料タンクとエンジンの間。", parts=["OilTank"],
            labels={"OilTank": "タンク", "OilTank_Filler": "給油口", "OilTank_Breather": "ブリーザー"}, group=G5)
-qm.catalog("front_susp", "前のサスペンション", "上下の A アーム、プッシュロッド、ロッカー、ダンパー。ダンパーはサバイバルセルの上に寝かせる。",
-           parts=["LowerArm_F", "UpperArm_F", "Pushrod_F", "Rocker_F", "RockerMount_F", "Damper_F", "DamperMount_F", "Upright_F"],
-           labels={"LowerArm_FL": "下の A アーム", "UpperArm_FL": "上の A アーム", "Pushrod_FL": "プッシュロッド", "Rocker_FR": "ロッカー",
+qm.catalog("front_susp", "前のサスペンション", "上下の A アーム、プッシュロッド、ロッカー、ダンパー。ダンパーはサバイバルセルの上に寝かせる。"
+           "ロッドエンドはすべて二股の金具（クレビス）にボルト 1 本で留め、ボールの両側にスペーサー。胴体側の金具はボルト 2 本でサバイバルセルへ。",
+           parts=["LowerArm_F", "UpperArm_F", "Pushrod_F", "Rocker_F", "Damper_F", "DamperMount_F", "Upright_F"],
+           labels={"LowerArm_FL": "下の A アーム", "UpperArm_FL": "上の A アーム", "Pushrod_FL": "プッシュロッド", "Rocker_FR": "ロッカー", "LowerArm_FL_RodEndF_Clevis_Lug1": "クレビス",
                    "Damper_FR": "ダンパー", "Upright_FR": "アップライト"}, group=G6)
-qm.catalog("front_brake", "前のブレーキ・ハブ・ホイール（左）", "ベンチレーテッドディスク 328×32mm と 6 ピストンキャリパー、ハブとセンターナット、18 インチのホイール。",
-           parts=["Disc_FL", "Caliper_FL", "CaliperBracket_FL", "Hub_FL", "Rim_FL", "Upright_FL", "BrakeDuct_FL"],
-           labels={"Disc_FL": "ブレーキディスク", "Caliper_FL": "キャリパー", "Hub_FL": "ハブ", "Rim_FL": "ホイール", "Upright_FL": "アップライト",
-                   "BrakeDuct_FL_Scoop": "ブレーキダクト"}, group=G6)
+qm.catalog("front_brake", "前のブレーキ・ハブ・ホイール（右を内側から）", "ベンチレーテッドディスク 328×32mm と一体型の 6 ピストンキャリパー、ハブとセンターナット、18 インチのホイール。"
+           "キャリパーのピストンが、裏板つきのパッドをディスクへ押す（2026 年は 6 か 8 ピストンを選べ、8 ピストンはパッド 4 枚。図は 6 ピストン・パッド 2 枚）。"
+           "ハブはアップライトの中の玉軸受 2 個で回り、ディスクはボビンでベルに、ベルはハブのつばにボルトで留める。パッドの厚み・軸受・ボビンの数は推定。",
+           parts=["Disc_FR", "Caliper_FR", "CaliperBracket_FR", "Hub_FR", "Rim_FR", "Upright_FR", "BrakeDuct_FR"],
+           labels={"Disc_FR": "ブレーキディスク", "Caliper_FR": "キャリパー", "Caliper_FR_PadIn": "パッド", "Hub_FR": "ハブ", "Rim_FR": "ホイール",
+                   "Upright_FR_BrgOut": "ハブの軸受", "Disc_FR_Bobbin1": "ボビン", "BrakeDuct_FR_Scoop": "ブレーキダクト"}, group=G6, view="front-left")
 qm.catalog("rear_susp", "後ろのサスペンション", "ギアボックスの横の取り付け台から出る A アームとトーリンク、プッシュロッドで動くロッカーとダンパー、アンチロールバー。",
-           parts=["LowerArm_R", "UpperArm_R", "ToeLink_R", "Pushrod_R", "Rocker_R", "RockerMount_R", "Damper_R", "DamperMount_R", "Upright_R", "Mount_",
+           parts=["LowerArm_R", "UpperArm_R", "ToeLink_R", "Pushrod_R", "Rocker_R", "Damper_R", "DamperMount_R", "Upright_R",
                   "AntiRollBar", "ARBMount", "RearHeave", "HeaveLink_R"],
            labels={"LowerArm_RL": "下の A アーム", "UpperArm_RL": "上の A アーム", "ToeLink_RL": "トーリンク", "Damper_RR": "ダンパー",
                    "Rocker_RR": "ロッカー", "AntiRollBar": "アンチロールバー", "RearHeave": "ヒーブダンパー", "Upright_RR": "アップライト"}, group=G6)
@@ -620,7 +697,7 @@ qm.catalog("brake_lines", "ブレーキの配管", "前後 2 系統。前はマ�
            labels={"BrakeLine_FL": "前の配管", "BrakeLine_Rear": "後ろの系統", "BBW": "ブレーキバイワイヤの弁", "Master1": "マスターシリンダー",
                    "BrakeLine_RR": "後ろの配管"}, group=G6, context=["Cell", "Upright_", "Caliper_", "Gearbox"])
 qm.catalog("arb_heave", "前のアンチロールバーとヒーブダンパー", "左右のロッカーをつなぐねじり棒（ロール）と、上下の動きだけを受ける 3 本目のダンパー（ヒーブ）。"
-           "配置は推定。", parts=["FrontARB", "FrontHeave", "ARBLink_F", "HeaveLink_F", "Rocker_F", "RockerMount_F"],
+           "配置は推定。", parts=["FrontARB", "FrontHeave", "ARBLink_F", "HeaveLink_F", "Rocker_F"],
            labels={"FrontARB": "アンチロールバー", "FrontHeave": "ヒーブダンパー", "ARBLink_FL": "リンク", "Rocker_FR": "ロッカー"}, group=G6)
 qm.catalog("drink", "ドリンクの装置・無線・記録装置", "シートの横の袋から、電動ポンプでヘルメットへ飲み物を送る。"
            "無線の箱と、事故のときの加速度を残す記録装置（ADR）。寸法は推定。", parts=["Drink", "Radio", "ADR"],
@@ -664,6 +741,11 @@ qm.catalog("sec_gearbox", "ギアボックスの断面（中心）", "車の中�
                   "DogHub", "BevelPinion", "CrownWheel", "Diff", "Brg_", "NeedleBrg", "ClutchSlave", "DropGear"],
            labels={"Clutch_Basket": "クラッチ", "DropGear_Clutch": "段差のギア", "InputShaft": "入力軸", "OutputShaft": "出力軸", "Gear1_Out": "1 速", "CrownWheel": "クラウンギア",
                    "Diff_Case": "デフ", "Gearbox": "ケース"}, group=G9, section=("X", 0.0))
+qm.catalog("sec_brake", "前のブレーキの断面（キャリパーの中心）", "右前のキャリパーの中心（車軸の 70mm 前）で切り、前から見た断面。ディスクを両側からパッドがはさみ、"
+           "その外にピストンと、キャリパーの一体の本体。上でディスクをまたぐのがブリッジで、パッドを止めるピンが通る。パッドの厚みは推定。",
+           parts=["Disc_FR", "Caliper_FR", "CaliperBracket_FR", "Hub_FR", "Upright_FR", "Rim_FR"],
+           labels={"Disc_FR": "ディスク", "Caliper_FR_PadIn": "パッド", "Caliper_FR_PistonIn2": "ピストン", "Caliper_FR": "キャリパー",
+                   "Caliper_FR_PadPin": "パッドのピン", "Upright_FR_Housing": "アップライト"}, group=G9, section=("Y", f1.caliper_body_offset(True)[1] * 0.5))
 qm.catalog("sec_chassis", "シャシーの断面（燃料タンクの位置）", "Y = 2,000mm で切り、前から見た断面。サバイバルセルの殻の中に燃料セルと、その下のエネルギーストア。"
            "左右のサイドポッドにインタークーラーとオイルクーラー。",
            parts=["Cell", "FuelCell", "ES", "Intercooler", "OilCooler", "RollHoop", "Halo", "Plank", "Headrest"],

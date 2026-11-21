@@ -238,17 +238,31 @@ def layout_problems(per: list[dict]) -> list[str]:
 
     floating = []
     if len(per) > 1:
-        for p in per:
+        # 外接箱を格子に登録し、近くの部品とだけ比べる（部品が何千あっても速く済むように）
+        cell = max(tol * 2, diag / 60)
+        grid: dict = {}
+
+        def cells(b, pad=0.0):
+            lo_ = [int(math.floor((b["min"][i] - pad) / cell)) for i in range(3)]
+            hi_ = [int(math.floor((b["max"][i] + pad) / cell)) for i in range(3)]
+            return [(x, y, z) for x in range(lo_[0], hi_[0] + 1) for y in range(lo_[1], hi_[1] + 1)
+                    for z in range(lo_[2], hi_[2] + 1)]
+
+        for k, o in enumerate(per):
+            for c in cells(o):
+                grid.setdefault(c, []).append(k)
+        for k, p in enumerate(per):
             if p["name"] in may_float:
                 continue
             # "*" を浮かせてよいとしたときは地面を数えず、ほかの部品とつながっているかだけを見る
             d = math.inf if "*" in may_float else max(0.0, p["min"][2])
-            for o in per:
+            near = sorted({j for c in cells(p, tol) for j in grid.get(c, ()) if j != k})
+            for j in near:
                 if d <= tol:
                     break
-                if o is not p:
-                    d = min(d, gap(p, o))
+                d = min(d, gap(p, per[j]))
             if d > tol:
+                d = min([d] + [gap(p, o) for o in per if o is not p])
                 floating.append(f"{p['name']}（いちばん近い物まで {d:.3f}m）")
     if floating:
         out.append("地面にもほかの部品にも接していない部品がある: " + "、".join(floating[:6])
