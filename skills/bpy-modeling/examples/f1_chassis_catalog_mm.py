@@ -5,8 +5,12 @@
 # 推定値  : 部品の位置（f1.LAYOUT）と、上に書いた以外の寸法（公表されていない）
 # 確認できた事実（細部）: 1 気筒 4 バルブ・DOHC・空気ばね、直噴（1 気筒 1 本・最大 500bar）
 #           プランクは厚さ 10mm・すり減りの下限 9mm・測る穴は直径 50mm
+# 作り方  : エンジンとギアボックスは実物と同じ部品の分け方（鋳物はブーリアンで穴・通路・空洞をあける）。
+#           管・排気管・プレナム・ターボ・MGU-K も中空（f1.HOLLOW）。そのため qm.cad() で四角形の検査を外す
 # 図鑑    : ビューアーの「図鑑を開く」で、qm.catalog で登録した項目ごとに等角図・三面図・部品表を描く（43 項目）
 qm.units("mm")
+qm.cad()
+f1.HOLLOW = True
 MM = qm.MM
 L = f1.LAYOUT
 
@@ -101,8 +105,10 @@ f1.control_electronics("CE", center=(0.16, 2.33, 0.073), size=(0.18, 0.14, 0.16)
 f1.oil_tank("OilTank", 2.25, 2.415, 0.14, 0.30, 0.60, mats=mats)
 
 # =========================================================== パワーユニット
-f1.v6_engine("Engine", mats=mats)
-f1.v6_internals("Crank", crank_deg=30, mats=mats)
+f1.v6_engine_real(30, mats=mats)        # ブロック・ベッドプレート・ヘッド・ガスケット・カバー・オイルパン・クランク・コンロッド・ピストン・バルブ・カム・ポンプ
+for k, (x, z) in enumerate(((-0.11, CZ - 70), (0.11, CZ - 70), (-0.11, CZ + 20), (0.11, CZ + 20))):   # エンジンをサバイバルセルに留めるスタッド
+    qm.cylinder(f"Engine_MountStud{k + 1}", 0.008, (YF - L["tub"][-1][0] + 8) * MM, seg=12, axis="Y",
+                location=(x, (YF + L["tub"][-1][0]) / 2 * MM, z * MM), material=titan)
 f1.intake("Intake", mats=mats)
 TC = P(0, 3060, 610)                                       # ターボの軸の中心
 f1.exhaust("Exhaust", turbine_in=(115, 3120, 610), mats=mats)
@@ -300,9 +306,7 @@ for side in (-1, 1):
 
 
 # =========================================================== 細かい部品
-# ---- エンジンの中：動弁系（1 気筒 4 バルブ・DOHC・空気ばね）、点火プラグ、直噴インジェクター（1 気筒 1 本）と燃料レール
-f1.v6_valvetrain("Valve", mats=mats)
-f1.v6_ignition("Plug", mats=mats)
+# ---- エンジンの中の動弁系・点火プラグ・インジェクターは、f1.v6_engine_real に含まれる
 
 # ---- ホイールテザー（A アームの中を通す。本数は規定書で確かめられなかったので、上下のアームに 1 本ずつ）
 for s, tg in ((-1, "FL"), (1, "FR")):
@@ -412,15 +416,7 @@ f1.small_box("IMU", (0, 1.845, 0.073), (0.05, 0.04, 0.03), color=(0.20, 0.35, 0.
 f1.v6_gear_train("GearTrain", mats=mats)
 f1.gear_cover("Engine_GearCover", [(0, CZ * MM, 0.077), (I2.x * MM, I2.y * MM, 0.0495), (MG.x, MG.z, 0.052)],
               (YF + 5) * MM, (YF + 33) * MM, mats=mats)
-# ---- クランクの主軸受、オイルフィルター
-cyl = f1.v6_cylinders()
-yc = [[y for b, k, y in cyl if b < 0 and k == i][0] + f1.V6["stagger"] / 2 for i in range(3)]
-mains = [yc[0] - 60, (yc[0] + yc[1]) / 2, (yc[1] + yc[2]) / 2, yc[2] + 60]
-for k, ym in enumerate(mains):
-    Lm = 40 if k in (0, 3) else 24
-    qm.orient(qm.ring(f"Crank_MainBearing{k + 1}", 0.034, 0.026, (Lm - 4) * MM, seg=24, origin="center", material=steel),
-              origin=P(0, ym, CZ), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
-qm.cylinder("Engine_OilFilter", 0.030, 0.032, seg=16, axis="Y", location=tuple(P(-90, YF - 16, 220)), material=mats["titanium"])
+# ---- 主軸受のメタルとオイルフィルターは、f1.v6_engine_real に含まれる
 
 # ---- 戻りの配管（燃料の戻り、オイルのスカベンジ、エンジンへのオイル、デフの油圧）
 route("FuelReturn", [P(70.7, 2610, 482), P(70, 2480, 530), P(200, 2440, 600), P(200, 2220, 600)], r=0.006, kind="fuel", mats=mats)
@@ -509,15 +505,16 @@ qm.catalog("es", "エネルギーストアと制御電子機器", "リチウム�
            labels={"ES": "エネルギーストア", "ES_CoolingPlate": "冷却板", "CE": "制御電子機器", "HVCableK": "MGU-K への配線",
                    "ESCooler": "ES・CE のクーラー", "ESCoolLine3": "冷却水の管"}, group=G3)
 qm.catalog("engine", "V6 エンジン（外観）", "1.6L・V 型 6 気筒・バンク角 90°。ボア 80mm・ストローク 53mm。吸気は V の内側、排気は外側。"
-           "前のカバーにウォーターポンプと燃料の高圧ポンプ。", parts=["Engine_"],
-           labels={"Engine_HeadL": "シリンダーヘッド", "Engine_CamCoverR": "カムカバー", "Engine_BlockL": "シリンダーブロック",
-                   "Engine_Crankcase": "クランクケース", "Engine_Sump": "オイルパン", "Engine_WaterPumpR": "ウォーターポンプ",
+           "ブロックはクランクの中心で上下に分かれ、下がベッドプレート。前のカバーにウォーターポンプと燃料の高圧ポンプ。", parts=["Engine_"],
+           labels={"Engine_HeadL": "シリンダーヘッド", "Engine_CamCoverR": "カムカバー", "Engine_Block": "シリンダーブロック",
+                   "Engine_Bedplate": "ベッドプレート", "Engine_Sump": "オイルパン", "Engine_WaterPumpR": "ウォーターポンプ",
                    "Engine_CoilR2": "点火コイル", "Engine_ScavengePump": "スカベンジポンプ",
                    "Engine_GearCover": "ギアのカバー", "Engine_OilFilter": "オイルフィルター"}, group=G4)
 qm.catalog("crank", "クランクシャフト・ピストン・コンロッド", "3 本のクランクピンを 120° おきに置き、1 本のピンに左右のコンロッド 2 本。"
-           "ピストンの直径 80mm（ボア）、行程 53mm。コンロッドの長さは推定。", parts=["Crank_"],
-           labels={"Crank_PistonL1": "ピストン", "Crank_RodR2": "コンロッド", "Crank_Pin3": "クランクピン", "Crank_Main1": "主軸",
-                   "Crank_Web2F": "ウェブ", "Crank_MainBearing2": "主軸受", "Crank_Gear": "前のギア"}, group=G4)
+           "クランクは 1 本の鍛造品（カウンターウェイト・油穴付き）。コンロッドはキャップとボルト 2 本で大端を締め、メタルをはさむ。"
+           "ピストンにはリング 3 本とピン・サークリップ。ピストンの直径 80mm（ボア）、行程 53mm。コンロッドの長さは推定。", parts=["Crank_"],
+           labels={"Crank_PistonL1": "ピストン", "Crank_RingL1": "ピストンリング", "Crank_RodR2": "コンロッド", "Crank_RodCapR2": "キャップ",
+                   "Crank_Shaft": "クランクシャフト", "Crank_MainShell2Upper": "主軸受のメタル", "Crank_Gear": "前のギア"}, group=G4)
 qm.catalog("intake", "吸気", "ターボで圧縮しインタークーラーで冷やした空気が、スロットルからプレナムへ入り、"
            "シリンダーごとのトランペットで吸い込まれる。", parts=["Intake_", "AirInlet"],
            labels={"Intake_Plenum": "プレナム", "Intake_Throttle": "スロットル", "Intake_TrumpetL2": "吸気トランペット",
@@ -574,7 +571,7 @@ qm.catalog("diff", "かさ歯車とデフ", "出力軸のピニオン（12 歯�
 G8 = "細かい部品"
 qm.catalog("valvetrain", "動弁系（左バンク）", "1 気筒に吸気 2・排気 2 のバルブ。バンクごとに吸気と排気のカムシャフト（DOHC）。"
            "バルブは金属のばねではなく空気ばねで閉じる。傾き・径・カムの形は推定。", parts=["Valve_L", "Cam_L"],
-           labels={"Valve_L1Ina": "吸気バルブ", "Valve_L1Exa": "排気バルブ", "Valve_L2Ina_AirSpring": "空気ばね", "Valve_L3Exb_Tappet": "タペット",
+           labels={"Valve_L1Ina": "吸気バルブ", "Valve_L1Exa": "排気バルブ", "Valve_L2Ina_SpringCyl": "空気ばね", "Valve_L3Exb_Tappet": "タペット",
                    "Cam_LIn": "吸気のカムシャフト", "Cam_LEx": "排気のカムシャフト", "Cam_LInGear": "カムのギア"}, group=G4)
 qm.catalog("ignition", "点火プラグとインジェクター", "点火プラグはシリンダーの真上。燃料は 1 気筒 1 本のインジェクターで、シリンダーへ直接噴く（最大 500bar）。"
            "左右のバンクの燃料レールから配る。", parts=["Plug_", "Injector_", "FuelRail_", "Engine_Coil"],

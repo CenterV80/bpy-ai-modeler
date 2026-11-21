@@ -623,7 +623,54 @@ def gearbox(name: str = "Gearbox", y0: float = 2.90, length: float = 0.66, mats=
           (y0 + 0.42, 0, z0 + 0.12, 0.30, 0.30, 0.05),      # デフ（ドライブシャフトの出口）のあたりで少し広い
           (y0 + 0.56, 0, z0 + 0.15, 0.20, 0.24, 0.04), (y0 + length, 0, z0 + 0.18, 0.15, 0.18, 0.03)]
     case = body(name, st, _m(mats, "carbon"), n=4)
-    return [flange, case]
+    if not HOLLOW:
+        return [flange, case]
+    # ---- 実物どおり（中空のケース、前後の軸受の壁、デフの軸受の受け、軸・ドラム・出力の穴、フランジの開口とボルト穴）
+    # 軸の位置は f1_gearbox_internals_mm.py と同じ：入力軸 z=270・出力軸 z=355（mm）、シフトドラム x=75、デフ y=3400。すべて推定
+    MM = 0.001
+    wall = 0.006
+
+    def at(y):                               # 外形の断面を y で補間
+        for a, b in zip(st, st[1:]):
+            if a[0] <= y <= b[0]:
+                t = (y - a[0]) / (b[0] - a[0])
+                return tuple(a[k] + (b[k] - a[k]) * t for k in range(6))
+        return st[0] if y < st[0][0] else st[-1]
+
+    def shrink(c, y):
+        return (y, c[1], c[2] + wall, c[3] - 2 * wall, c[4] - 2 * wall, max(0.004, c[5] - wall))
+    def cavity(ya, yb):                      # ya〜yb の空洞（外形の断面を肉厚ぶん縮めた形）
+        ys_ = [ya] + [c[0] for c in st if ya < c[0] < yb] + [yb]
+        return body("_gbi", [shrink(at(min(max(y, st[0][0]), st[-1][0])), y) for y in ys_], None, n=4)
+    # 空洞は 3 つ（ベルハウジング・ギアの部屋・デフの部屋）。間に残る壁が、前後の軸受の壁になる
+    holes = [cavity(y0 - 0.005, y0 + 0.051), cavity(y0 + 0.089, y0 + 0.353), cavity(y0 + 0.395, y0 + length - wall)]
+    for z, r in ((0.270, 0.031), (0.355, 0.036)):                       # 入力軸・出力軸の軸受の穴（前後の壁）
+        for ya, yb in ((y0 + 0.045, y0 + 0.095), (y0 + 0.347, y0 + 0.401)):
+            holes.append(qm.cylinder("_bb", r, yb - ya, seg=40, axis="Y", location=(0, (ya + yb) / 2, z)))
+    holes.append(qm.cylinder("_drum", 0.031, 0.06, seg=32, axis="Y", location=(0.075, y0 + 0.07, 0.355)))   # シフトドラムのアクチュエーター
+    for s_ in (-1, 1):                                                   # 左右の横：デフの軸受の受け（別の部品）を差し込む穴
+        holes.append(qm.cylinder("_dside", 0.062, 0.08, seg=48, axis="X", location=(s_ * 0.120, 3.400, 0.355)))
+    qm.cut(case, holes)
+    qm.cut(flange, [body("_gfo", [shrink(at(st[0][0]), y0 - 0.01), shrink(at(st[0][0]), y0 + 0.03)], None, n=4)])
+    # デフの軸受の受け（左右から差し込んでボルトで留める。中に軸受、外は出力軸の穴）
+    extra = []
+    ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
+    for s_, t_ in ((-1, "L"), (1, "R")):
+        car = qm.ring(f"{name}_DiffCarrier{t_}", 0.062, 0.050, 0.045, seg=48, origin="center", material=ti)
+        fl = qm.ring(f"{name}_DiffCarrier{t_}_Flange", 0.080, 0.033, 0.006, seg=48, origin="center", material=ti)
+        qm.orient(car, origin=(s_ * 0.1045, 3.400, 0.355), x_axis=(0, 1, 0), z_axis=(1, 0, 0))
+        qm.orient(fl, origin=(s_ * 0.130, 3.400, 0.355), x_axis=(0, 1, 0), z_axis=(1, 0, 0))
+        extra += [car, fl]
+        for k in range(6):
+            a_ = 2 * math.pi * k / 6
+            bo = qm.bolt(f"{name}_DiffCarrier{t_}_Bolt{k + 1}", "M6", 0.02, material=_mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3))
+            qm.orient(bo, origin=(s_ * 0.133, 3.400 + 0.071 * math.cos(a_), 0.355 + 0.071 * math.sin(a_)), x_axis=(0, 1, 0), z_axis=(s_, 0, 0))
+            extra.append(bo)
+    # フランジのボルト穴（エンジンとギアボックスをつなぐ 12 本）
+    fz = z0 + 0.06 + 0.18
+    pos = [(x, fz + s_ * 0.16) for x in (-0.18, -0.06, 0.06, 0.18) for s_ in (-1, 1)] + [(s_ * 0.18, fz + t * 0.055) for s_ in (-1, 1) for t in (-1, 1)]
+    qm.cut(flange, [qm.cylinder("_fb", 0.0052, 0.04, seg=16, axis="Y", location=(x, y0 + 0.011, z)) for x, z in pos])
+    return [flange, case] + extra
 
 
 def crash_structure(name: str = "RearCrash", y0: float = 3.55, length: float = 0.40, mats=None):
@@ -765,6 +812,30 @@ def differential(name: str = "Diff", case_r: float = 0.060, case_len: float = 0.
     for side in (-1, 1):
         parts.append(qm.ring(f"{name}_Output{'L' if side < 0 else 'R'}", 0.030, 0.012, 0.040, seg=24,
                              location=(0, 0, side * h + (0 if side > 0 else -0.040)), material=steel))
+    if not HOLLOW:
+        return parts
+    # ---- 実物どおり：中空のケース、左右のサイドギア（16 歯）、ピニオン 2 個（10 歯）とクロスピン、差動制限のクラッチ板
+    # 歯数・モジュールは推定。ピニオンのピッチ角 = atan(10/16)
+    qm.cut(parts[0], [qm.lathe("_dci", [(0.013, -h - 0.01), (0.013, -0.050), (0.046, -0.047), (0.050, -0.030), (0.050, 0.030),
+                                        (0.046, 0.047), (0.013, 0.050), (0.013, h + 0.01)], seg=32)])
+    m_, zs, zp = 0.003, 16, 10
+    gp = math.degrees(math.atan(zp / zs))
+    rs, rpn = m_ * zs / 2, m_ * zp / 2
+    for side, tag in ((-1, "L"), (1, "R")):
+        g = qm.bevel_gear(f"{name}_SideGear{tag}", zs, m_, 0.012, 90 - gp, material=steel)
+        # 外側の端（ヒール）を、軸の交点から相手の基準円の半径だけ離す（= rpn）
+        qm.orient(g, origin=(0, 0, side * rpn), x_axis=(1, 0, 0), z_axis=(0, 0, -side))
+        hub = qm.cylinder(f"{name}_SideGear{tag}_Spline", 0.012, 0.035, seg=24, location=(0, 0, side * 0.015 + (0 if side > 0 else -0.035)), material=steel)
+        parts += [g, hub]
+        for k in range(6):          # クラッチ板（摩擦板と鋼の板を交互）
+            z = side * (0.020 + k * 0.004)
+            parts.append(qm.ring(f"{name}_ClutchPlate{tag}{k + 1}", 0.038, 0.015, 0.0018, seg=32, origin="center", location=(0, 0, z),
+                                 material=steel if k % 2 else qm.material("F1_Friction", (0.25, 0.20, 0.15), metal=0.2, rough=0.8)))
+    for side, tag in ((-1, "A"), (1, "B")):
+        p_ = qm.bevel_gear(f"{name}_Pinion{tag}", zp, m_, 0.012, gp, material=steel)
+        qm.orient(p_, origin=(side * rs, 0, 0), x_axis=(0, 0, 1), z_axis=(-side, 0, 0))
+        parts.append(p_)
+    parts.append(qm.cylinder(f"{name}_CrossPin", 0.007, 0.10, seg=16, axis="X", material=steel))
     return parts
 
 
@@ -785,6 +856,20 @@ LAYOUT = {
 V6 = {"bore": 80.0, "stroke": 53.0, "vee": 90.0,                       # 確認できた値
       "pitch": 96.0, "stagger": 16.0, "rod": 110.0, "comp_h": 25.0,   # 以下は推定
       "deck": 170.0, "head": 110.0, "cover": 55.0, "block_w": 124.0, "head_w": 150.0}
+
+
+HOLLOW = False   # True にすると、管・排気管・プレナム・ターボ・MGU-K を中が空の実物どおりに作る（ブーリアン。qm.cad() と一緒に）
+
+
+def hollow(ob, points, r: float, wall: float):
+    """管（qm.tube で points に沿って作った半径 r の物）を、肉厚 wall の中空にする（HOLLOW のときだけ）。両端は開く"""
+    if not HOLLOW or r - wall <= 1e-4:
+        return ob
+    pts = [Vector(p) for p in points]
+    a = pts[0] - (pts[1] - pts[0]).normalized() * (wall * 3)
+    b = pts[-1] + (pts[-1] - pts[-2]).normalized() * (wall * 3)
+    inner = qm.tube("_hollow", [a] + pts[1:-1] + [b], radius=r - wall, seg=max(12, len(ob.data.vertices) // max(len(pts), 1)))
+    return qm.cut(ob, [inner])
 
 
 def _z0():
@@ -1292,6 +1377,15 @@ def intake(name: str = "Intake", mats=None):
     parts.append(body(f"{name}_Plenum", st, carbon, n=3))
     th = qm.cylinder(f"{name}_Throttle", 0.045, 0.045, seg=20, axis="Y", location=(0, (y0 - 18) * MM, (cz + 330) * MM), material=alu)
     parts.append(th)
+    if HOLLOW:      # プレナムは厚み 3mm の殻、トランペットの上端はその中。スロットルは筒と、中の蝶形の弁と軸
+        inner = body("_pi", [((y0 + 3) * MM, 0, (cz + 273) * MM, 0.214, 0.114, 0.037), ((y0 + 30) * MM, 0, (cz + 268) * MM, 0.244, 0.129, 0.047),
+                             ((y1 - 30) * MM, 0, (cz + 268) * MM, 0.244, 0.129, 0.047), ((y1 - 3) * MM, 0, (cz + 273) * MM, 0.214, 0.114, 0.037)], None, n=3)
+        qm.cut(parts[-2], [inner, qm.cylinder("_pin", 0.040, 0.03, seg=20, axis="Y", location=(0, y0 * MM, (cz + 330) * MM))])
+        qm.cut(th, [qm.cylinder("_thi", 0.040, 0.06, seg=20, axis="Y", location=(0, (y0 - 18) * MM, (cz + 330) * MM))])
+        fly = qm.cylinder(f"{name}_ThrottleButterfly", 0.0395, 0.002, seg=20, origin="center", location=(0, (y0 - 18) * MM, (cz + 330) * MM), material=alu)
+        qm.pivot(fly, (0, (y0 - 18) * MM, (cz + 330) * MM), (60, 0, 0))
+        shaft = qm.cylinder(f"{name}_ThrottleShaft", 0.004, 0.10, seg=10, axis="X", location=(0, (y0 - 18) * MM, (cz + 330) * MM), material=alu)
+        parts += [fly, shaft]
     return parts
 
 
@@ -1314,18 +1408,23 @@ def exhaust(name: str = "Exhaust", turbine_in=None, mats=None):
             port = v6_point(bank, tc, -(V6["head_w"] / 2 - 3), y)
             out = (v6_point(bank, tc, -1000, y) - v6_point(bank, tc, 0, y)).normalized()
             p1 = port + out * 45
-            p2 = Vector((cx + bank * 8 * (i - 1), y + 10, cz + 20 + 14 * (2 - i)))
-            pts = [port, p1, p2, Vector((cx + bank * 10 * (i - 1), coll0.y - 40, cz + 12 * (i - 1))), coll0 + Vector((bank * 12 * (i - 1), 2, 10 * (i - 1)))]
+            p2 = Vector((cx + bank * 8 * (i - 1), y, cz + 20 + 14 * (2 - i)))       # 道すじが後ろへだけ進むように（折り返すと管がこわれる）
+            pts = [port, p1, p2, Vector((cx + bank * 10 * (i - 1), max(coll0.y - 40, y + 18), cz + 12 * (i - 1))),
+                   coll0 + Vector((bank * 12 * (i - 1), 2, 10 * (i - 1)))]
             parts.append(qm.tube(f"{name}_Primary{tag}{i + 1}", [p * MM for p in pts], radius=0.019, seg=12, material=inconel))
+            hollow(parts[-1], [p * MM for p in pts], 0.019, 0.0012)
             fl = qm.box(f"{name}_Flange{tag}{i + 1}", (0.05, 0.05, 0.008), origin="center", material=inconel)
             qm.orient(fl, origin=port * MM, x_axis=(0, 1, 0), z_axis=out)
             parts.append(fl)
         col = qm.lathe(f"{name}_Collector{tag}", [(0.042, 0), (0.040, 0.03), (0.028, 0.075)], seg=16, material=inconel)
+        if HOLLOW:
+            qm.cut(col, [qm.lathe("_ci", [(0.0405, -0.002), (0.0385, 0.03), (0.0265, 0.077)], seg=16)])
         qm.orient(col, origin=coll0 * MM, x_axis=(1, 0, 0), z_axis=(0, 1, 0))
         parts.append(col)
         t_in = Vector((bank * abs(tin.x), tin.y, tin.z))
         sec = [coll0 + Vector((0, 70, 0)), Vector((bank * 240, yr + 110, 450)), Vector((bank * 170, tin.y - 60, tin.z - 40)), t_in]
         parts.append(qm.tube(f"{name}_ToTurbo{tag}", [p * MM for p in sec], radius=0.026, seg=12, material=inconel))
+        hollow(parts[-1], [p * MM for p in sec], 0.026, 0.0015)
     return parts
 
 
@@ -1344,6 +1443,30 @@ def turbocharger(name: str = "Turbo", mats=None):
     parts = [comp, chra, turb, out]
     for s, t in ((-1, "L"), (1, "R")):
         parts.append(qm.cylinder(f"{name}_TurbineInlet{t}", 0.030, 0.050, seg=16, axis="X", location=(s * 0.095, 0, 0.060), material=inconel))
+    if HOLLOW:      # ハウジングの中（渦巻き・吸い口・排気の出口）と、羽根車 2 つ・軸・軸受
+        qm.cut(comp, [qm.lathe("_cv", [(0.036, -0.155), (0.040, -0.110), (0.052, -0.082), (0.090, -0.070), (0.096, -0.055), (0.085, -0.040),
+                                         (0.020, -0.036)], seg=32),
+                      qm.cylinder("_co", 0.029, 0.09, seg=16, axis="X", location=(0.080, 0.045, -0.060))])
+        qm.cut(out, [qm.cylinder("_coi", 0.029, 0.09, seg=16, axis="X", location=(0.080, 0.045, -0.060))])
+        qm.cut(turb, [qm.lathe("_tv", [(0.020, 0.034), (0.085, 0.040), (0.095, 0.058), (0.086, 0.078), (0.054, 0.088), (0.045, 0.145)], seg=32)])
+        for p_ in parts[-2:]:
+            qm.cut(p_, [qm.cylinder("_ti", 0.025, 0.06, seg=16, axis="X", location=(p_.location.x, 0, 0.060))])
+        qm.cut(chra, [qm.cylinder("_bi", 0.022, 0.07, seg=24, origin="center")])
+        wheel_c = qm.lathe(f"{name}_CompressorWheel", [(0.012, -0.112), (0.020, -0.100), (0.050, -0.076), (0.050, -0.070), (0.012, -0.068)],
+                           seg=32, material=alu)
+        wheel_t = qm.lathe(f"{name}_TurbineWheel", [(0.012, 0.040), (0.046, 0.044), (0.046, 0.050), (0.022, 0.075), (0.012, 0.082)],
+                           seg=32, material=inconel)
+        blades = []
+        for k in range(10):
+            for nm_, z0, z1, rr in (("CompressorBlade", -0.110, -0.072, 0.046), ("TurbineBlade", 0.044, 0.078, 0.042)):
+                b = qm.box(f"{name}_{nm_}{k + 1}", (rr - 0.014, 0.0015, z1 - z0), origin="bottom", location=((rr + 0.014) / 2, 0, z0),
+                           material=alu if nm_.startswith("Comp") else inconel)
+                qm.pivot(b, (0, 0, 0), (0, 0, 36 * k))
+                blades.append(b)
+        shaft = qm.cylinder(f"{name}_Shaft", 0.008, 0.20, seg=16, origin="center", material=steel)
+        brgs = [qm.ring(f"{name}_ShaftBearing{k + 1}", 0.020, 0.008, 0.012, seg=24, origin="center", location=(0, 0, z), material=steel)
+                for k, z in enumerate((-0.018, 0.018))]
+        parts += [wheel_c, wheel_t, shaft] + blades + brgs
     return parts
 
 
@@ -1361,7 +1484,25 @@ def mgu_k(name: str = "MGUK", mats=None):
     hv = qm.cylinder(f"{name}_HVTerminal", 0.016, 0.030, seg=12, axis="X", location=(-0.082, 0, -0.080), material=orange)
     cool = [qm.cylinder(f"{name}_CoolPort{k + 1}", 0.008, 0.025, seg=10, location=(0, 0.03 * (2 * k - 1), -0.002), material=alu)
             for k in range(2)]
-    return [body_ob] + rings + [shaft, gear, hv] + cool
+    parts = [body_ob] + rings + [shaft, gear, hv] + cool
+    if HOLLOW:      # ケースの中：固定子（コイルの入る溝つきの鉄心）・回転子（磁石）・軸・前後の軸受
+        qm.cut(body_ob, [qm.cylinder("_mi", 0.068, 0.161, seg=32, location=(0, 0, -0.168))])
+        stator = qm.ring(f"{name}_Stator", 0.068, 0.046, 0.12, seg=32, location=(0, 0, -0.145), material=qm.material("F1_Lamination", (0.30, 0.30, 0.33), metal=0.8, rough=0.4))
+        slots = [qm.box(f"_sl{k}", (0.010, 0.006, 0.13), origin="bottom", location=(0.049, 0, -0.150)) for k in range(12)]
+        for k, sl in enumerate(slots):
+            qm.pivot(sl, (0, 0, 0), (0, 0, 30 * k))
+        qm.cut(stator, slots)
+        windings = []
+        for k in range(12):
+            w = qm.box(f"{name}_Winding{k + 1}", (0.009, 0.005, 0.12), origin="bottom", location=(0.0495, 0, -0.145),
+                       material=qm.material("F1_Copper", (0.80, 0.45, 0.20), metal=1.0, rough=0.3))
+            qm.pivot(w, (0, 0, 0), (0, 0, 30 * k))
+            windings.append(w)
+        rotor = qm.ring(f"{name}_Rotor", 0.044, 0.014, 0.115, seg=32, location=(0, 0, -0.1425), material=qm.material("F1_Magnet", (0.25, 0.25, 0.28), metal=0.7, rough=0.3))
+        rshaft = qm.cylinder(f"{name}_RotorShaft", 0.014, 0.178, seg=16, location=(0, 0, -0.176), material=steel)
+        brgs = [qm.ring(f"{name}_Bearing{k + 1}", 0.026, 0.014, 0.010, seg=24, location=(0, 0, z), material=steel) for k, z in enumerate((-0.168, -0.012))]
+        parts += [stator, rotor, rshaft] + windings + brgs
+    return parts
 
 
 def radiator(name: str, length: float = 0.50, height: float = 0.36, thickness: float = 0.05, mats=None):
@@ -1404,6 +1545,7 @@ def pipe(name: str, points, r: float = 0.019, kind: str = "hose", mats=None):
     steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
     pts = [Vector(p) for p in points]
     parts = [qm.tube(name, pts, radius=r, seg=12, material=m)]
+    hollow(parts[0], pts, r, max(0.0008, r * 0.12))
     for k, (p, q) in enumerate(((pts[0], pts[1]), (pts[-1], pts[-2]))):
         d = (q - p).normalized()
         cl = qm.ring(f"{name}_Clamp{k + 1}", r + 0.003, r - 0.001, 0.008, seg=12, origin="center", material=steel)
@@ -1903,7 +2045,17 @@ HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でその
 - ノーズ・プランク・センサー: f1.nose_crash(y0, length) / f1.pitot(tip) / f1.plank(y0, y1, width)（厚さ 10mm）/ f1.ride_height_sensor(name, location)
 - 残りの部品: f1.v6_gear_train()（前のカバーの中のギア列）/ f1.gear_cover(name, [(x, z, r)...], y0, y1) / f1.brake_duct(name, disc_center, out, cal_dir) /
   f1.antenna(base) / f1.rain_light(center) / f1.mesh_point(c1, c2, d1, d2)（ギアをかみ合わせる位置）
+- f1.HOLLOW = True にすると、管・排気管・プレナム・スロットル・ターボ（羽根車まで）・MGU-K（固定子・回転子まで）を中が空の実物どおりに作る
+  （ブーリアン。qm.cad() と一緒に）。f1.hollow(ob, points, r, wall) で、自分で作った管も中空に
+- 実物どおりの V6（ブーリアンを使うので qm.cad() と一緒に。f1_engine.py）: f1.v6_engine_real(crank_deg) で全部、または
+  f1.v6_block()（ブロックとベッドプレート）/ f1.v6_heads() / f1.v6_head_gaskets() / f1.v6_cam_covers() / f1.v6_front_cover() /
+  f1.v6_sump() / f1.v6_crankshaft() / f1.v6_conrods() / f1.v6_pistons() / f1.v6_valves() / f1.v6_camshafts() / f1.v6_studs() /
+  f1.v6_plugs_injectors() / f1.v6_pumps()
 - 冷却・配管: f1.radiator(name, length, height)（原点・Y が長さ）/ f1.pipe(name, [点...], r, kind="water"|"oil"|"fuel"|"air"|"hv"|"brake"|"hydraulic"|"loom"|"extinguisher")。ブレーキ・油圧・配線の束も pipe で
 
 寸法: f1.SPEC（2026 年規定で確認できた値）、f1.EST（推定値）、f1.BRAKE（ディスクの直径・厚み）。変えたいときは f1.EST["height"] = 0.93 のように上書きしてから作る
 """
+
+
+# 実物どおりの部品の分け方で作る V6 エンジン（ブーリアンを使う。f1_engine.py）
+from f1_engine import *  # noqa: E402,F401,F403
