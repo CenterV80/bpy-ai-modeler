@@ -293,7 +293,9 @@ def resolve_catalog(per: list[dict]) -> list[dict]:
             hit = [n for n in objs if n == pre] or [n for n in objs if n.startswith(pre)]
             if hit:
                 labels.append({"prefix": pre, "text": text, "objects": hit})
-        out.append({**it, "objects": objs, "box": size, "labels": labels})
+        ctx_pats = it.get("context") or []
+        ctx = [n for n in names if n not in objs and any(n == p or n.startswith(p) for p in ctx_pats)]
+        out.append({**it, "objects": objs, "box": size, "labels": labels, "context_objects": ctx})
     return out
 
 

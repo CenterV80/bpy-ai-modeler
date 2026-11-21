@@ -255,9 +255,10 @@ AI は `f1_help` ツールで使い方を読みます。
 | `f1.tether` / `f1.coupling` / `f1.nozzle` / `f1.drink_system` | ホイールテザー / 燃料を入れ・抜く口 / 消火器のノズル / ドリンクの装置 |
 | `f1.header_tank` / `f1.wastegate` / `f1.small_box` | 冷却水のヘッダータンク / ウェイストゲート / ECU・無線・記録装置などの箱 |
 | `f1.hydraulic_pump` / `f1.accumulator` / `f1.valve_block` | 油圧ポンプ / アキュムレーター / 油圧の制御弁 |
+| `f1.nose_crash` / `f1.pitot` / `f1.plank` / `f1.ride_height_sensor` | ノーズの衝撃吸収構造 / ピトー管 / プランク（厚さ 10mm、チタンのスキッド） / 車高のレーザーセンサー |
 
 部品の位置は `f1.LAYOUT`（ミリ）、エンジンの寸法は `f1.V6` にまとめています。ボア 80mm・ストローク 53mm・バンク角 90° は確認できた値、
-ほかの位置と寸法は推定です。全部を組み立てて部品ごとの図鑑（36 項目）を描く例が `skills/bpy-modeling/examples/f1_chassis_catalog_mm.py` にあります。
+ほかの位置と寸法は推定です。全部を組み立てて部品ごとの図鑑（39 項目）を描く例が `skills/bpy-modeling/examples/f1_chassis_catalog_mm.py` にあります。
 
 歯車は `qm.gear`（平歯車）と `qm.bevel_gear`（かさ歯車）、軸受は `qm.ball_bearing`（内輪・外輪・玉）を使います。
 ギアボックスの中身を組んだ例が `skills/bpy-modeling/examples/f1_gearbox_internals_mm.py` にあります
@@ -307,6 +308,7 @@ qm.catalog("clutch", "クラッチ", "エンジンの回転をギアボックス
   - **等角図**：線画。主な部品に引き出し線と名前
   - **三面図**（正面・側面・平面）：外形の寸法線（mm）
   - **部品表**：引き出し線を付けた部品の数と大きさ
+- `view="rear"` で等角図を後ろから、`context=[...]` で周りの部品を位置の目安として薄く描けます（配管・センサーなど散らばった部品に）
 - 「線画 / 色つき」を切り替えられます。「印刷・PDF」で 1 項目 1 ページ（A4 横）に印刷できます
 - 線画は、面の折れ目（30° 以上）の線と、奥行きの段差から取った輪郭線で描いています
 

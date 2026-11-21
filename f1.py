@@ -1649,6 +1649,64 @@ def valve_block(name: str, center, size=(0.08, 0.10, 0.08), solenoids: int = 6, 
     return parts
 
 
+
+# ---------------------------------------------------------------- ノーズの衝撃吸収構造・プランク・センサー
+# 確認できた事実: プランク（スキッドブロック）は厚さ 10mm、レース後に 9mm 未満にすり減ってはいけない。
+#   すり減りは直径 50mm の穴で測り、穴のまわりにチタンのスキッドを付けてよい。
+#   センサー: 車高のレーザー、タイヤの空気圧（FIA が決めた装置、ホイールの中）、ノーズのピトー管など。
+# 推定: プランクの幅・長さ、ノーズの形と長さ、センサーの位置と大きさ
+
+
+def nose_crash(name: str = "NoseCrash", y0: float = -0.35, length: float = 0.62, mats=None):
+    """ノーズの衝撃吸収構造（前の隔壁から前へ伸びる、先細りのカーボンの筒）と、隔壁に留めるフランジ。戻り値はリスト"""
+    z0 = _z0()
+    carbon = _m(mats, "carbon")
+    y1 = y0 - length
+    st = [(y1, 0, z0 + 0.16, 0.12, 0.10, 0.04), (y1 + length * 0.3, 0, z0 + 0.12, 0.17, 0.17, 0.05),
+          (y1 + length * 0.7, 0, z0 + 0.06, 0.24, 0.27, 0.06), (y0 - 0.012, 0, z0 + 0.02, 0.28, 0.33, 0.06)]
+    shell = body(name, st, carbon, n=3)
+    fl = body(f"{name}_Flange", [(y0 - 0.012, 0, z0 + 0.005, 0.30, 0.355, 0.06), (y0 + 0.0, 0, z0 + 0.005, 0.30, 0.355, 0.06)], carbon, n=3)
+    return [shell, fl]
+
+
+def pitot(name: str = "Pitot", tip=(0, -1.0, 0.25), length: float = 0.12, mats=None):
+    """ピトー管（前向きの細い管と、根もとの台座）。tip は台座の前の面。戻り値はリスト"""
+    ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
+    x, y, z = tip
+    base = qm.box(f"{name}_Base", (0.02, 0.03, 0.012), origin="bottom", location=(x, y + 0.012, z - 0.006), material=ti)
+    tube = qm.lathe(name, [(0.003, 0), (0.003, length * 0.8), (0.0045, length * 0.85), (0.0045, length)], seg=10, material=ti)
+    qm.orient(tube, origin=(x, y + 0.002, z), x_axis=(1, 0, 0), z_axis=(0, -1, 0))
+    return [base, tube]
+
+
+def plank(name: str = "Plank", y0: float = 0.30, y1: float = 3.10, width: float = 0.30, thickness: float = 0.010,
+          holes=None, mats=None):
+    """プランク（フロアの下の中央に付く板。すり減りで車高の下限を守らせる）。下面が z = plank_z - thickness。
+    holes はすり減りを測る穴の y の一覧。穴のまわりにチタンのスキッド（直径 50mm の穴の縁）。戻り値はリスト"""
+    z_top = EST["plank_z"]
+    m = qm.material("F1_Plank", (0.45, 0.33, 0.20), metal=0.0, rough=0.8)
+    ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
+    L = y1 - y0
+    p = qm.box(name, (width, L, thickness), segs=(2, max(4, int(L / 0.1)), 1), origin="bottom",
+               location=(0, (y0 + y1) / 2, z_top - thickness), material=m, bevel=0.003)
+    parts = [p]
+    holes = holes or [y0 + L * t for t in (0.15, 0.40, 0.65, 0.90)]
+    for k, y in enumerate(holes):
+        parts.append(qm.ring(f"{name}_Skid{k + 1}", 0.040, 0.025, thickness + 0.0004, seg=24, origin="bottom",
+                             location=(0, y, z_top - thickness - 0.0002), material=ti))
+    return parts
+
+
+def ride_height_sensor(name: str, location, mats=None):
+    """車高のレーザーセンサー（下向きの小さな箱と、窓）。location は上面の中心。戻り値はリスト"""
+    case = qm.material("F1_Sensor", (0.10, 0.10, 0.12), metal=0.5, rough=0.4)
+    glass = qm.material("F1_SensorWindow", (0.6, 0.1, 0.1), metal=0.2, rough=0.1)
+    x, y, z = location
+    b = qm.box(name, (0.030, 0.040, 0.022), origin="top", location=location, material=case, bevel=0.003)
+    w = qm.cylinder(f"{name}_Window", 0.007, 0.002, seg=12, origin="top", location=(x, y, z - 0.0215), material=glass)
+    return [b, w]
+
+
 HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でそのまま使える。前 = -Y、前輪の軸 y=0、上 = Z）
 
 まとめて作る: f1.car(livery=(r,g,b), front_wing_elements=3, wheel_covers=True) → {種類: [オブジェクト...]}
@@ -1699,6 +1757,7 @@ HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でその
 - 小物: f1.tether(name, p0, p1)（ホイールテザー）/ f1.coupling(name, location, axis) / f1.nozzle(name, location, direction) /
   f1.drink_system() / f1.small_box(name, center, size)（ECU・無線・ADR などの箱）/ f1.header_tank(location) / f1.wastegate(location)
 - 油圧: f1.hydraulic_pump(name, location, axis) / f1.accumulator(name, p0, p1) / f1.valve_block(name, center)
+- ノーズ・プランク・センサー: f1.nose_crash(y0, length) / f1.pitot(tip) / f1.plank(y0, y1, width)（厚さ 10mm）/ f1.ride_height_sensor(name, location)
 - 冷却・配管: f1.radiator(name, length, height)（原点・Y が長さ）/ f1.pipe(name, [点...], r, kind="water"|"oil"|"fuel"|"air"|"hv"|"brake"|"hydraulic"|"loom"|"extinguisher")。ブレーキ・油圧・配線の束も pipe で
 
 寸法: f1.SPEC（2026 年規定で確認できた値）、f1.EST（推定値）、f1.BRAKE（ディスクの直径・厚み）。変えたいときは f1.EST["height"] = 0.93 のように上書きしてから作る

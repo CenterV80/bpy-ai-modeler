@@ -92,6 +92,7 @@ scene.add(key);
 const fill = new THREE.MeshLambertMaterial({ color: 0xffffff, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
 const edgeMat = new LineMaterial({ color: 0x15171a, linewidth: 1.5 });   // 面の折れ目（30° 以上）の線
 const normalMat = new THREE.MeshNormalMaterial();
+const ghost = new THREE.MeshBasicMaterial({ color: 0xd9dee6, transparent: true, opacity: 0.45, depthWrite: false });
 
 const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const quadMat = new THREE.ShaderMaterial({
@@ -109,7 +110,7 @@ const quadMat = new THREE.ShaderMaterial({
       float e = 0.0;
       if (bg != (l > 0.9999) || bg != (r > 0.9999) || bg != (u > 0.9999) || bg != (b > 0.9999)) e = 1.0;
       else if (!bg) e = step(dThr, max(abs(l + r - 2.0*d), abs(u + b - 2.0*d)));
-      vec3 c = bg ? vec3(1.0) : pow(texture2D(tColor, vUv).rgb, vec3(1.0/2.2));
+      vec3 c = pow(texture2D(tColor, vUv).rgb, vec3(1.0/2.2));   // 背景は白（薄く描いた周りの部品はそのまま）
       gl_FragColor = vec4(mix(c, vec3(0.07, 0.08, 0.09), e), 1.0);
     }`,
 });
@@ -128,13 +129,14 @@ let model = null, meshes = [], styleColor = false;
 
 function setEdges(on) { for (const m of meshes) for (const c of m.children) if (c.userData.edge) c.visible = on; }
 function inSet(m, set) { let p = m; while (p) { if (set.has(p.name)) return true; p = p.parent; } return false; }
-function setVisible(names) {
-  const set = new Set(names);
+/** 項目の部品を表示し、context（周りの部品）は薄く描く印を付ける */
+function setVisible(names, ctx = []) {
+  const set = new Set(names), cset = new Set(ctx);
   model.traverse(o => { if (o.isMesh) o.visible = false; });
   for (const m of meshes) {
-    let p = m, on = false;
-    while (p) { if (set.has(p.name)) { on = true; break; } p = p.parent; }
-    m.visible = on;
+    const on = inSet(m, set), c = !on && inSet(m, cset);
+    m.visible = on || c;
+    m.userData.ctx = c;
   }
 }
 function boxOf(names) {
@@ -148,9 +150,10 @@ function boxOf(names) {
 }
 
 /** 正投影で描いて、線画の画像（canvas）と投影用のカメラを返す */
-function draw(box, dir, up, w, h, pad) {
+function draw(box, dir, up, w, h, pad, outer = null) {
   const c = box.getCenter(new THREE.Vector3());
   const r = box.getSize(new THREE.Vector3()).length() / 2 || 0.01;
+  const R = outer ? Math.max(r, outer.distanceToPoint(c) + outer.getSize(new THREE.Vector3()).length() / 2) : r;
   const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.0001, 10);
   cam.up.copy(up);
   cam.position.copy(c).addScaledVector(dir, r * 3);
@@ -164,19 +167,23 @@ function draw(box, dir, up, w, h, pad) {
   if (typeof h === 'function') h = Math.round(h(ex / Math.max(ey, 1e-6)));
   const a = w / h;
   const half = Math.max(ey, ex / a) / 2 / (1 - pad);
-  Object.assign(cam, { left: -half * a, right: half * a, top: half, bottom: -half, near: r * 3 - r * 1.05, far: r * 3 + r * 1.05 });
+  Object.assign(cam, { left: -half * a, right: half * a, top: half, bottom: -half, near: r * 3 - R * 1.05, far: r * 3 + R * 1.05 });
   cam.updateProjectionMatrix();
   key.position.copy(c).add(new THREE.Vector3(-0.4, 1, 0.6).multiplyScalar(r * 4));
   const t = targets(w, h);
   renderer.setSize(w, h, false);
   edgeMat.resolution.set(w, h);
-  for (const m of meshes) m.material = styleColor ? m.userData.mat : fill;
+  for (const m of meshes) m.material = m.userData.ctx ? ghost : (styleColor ? m.userData.mat : fill);
   setEdges(true);
+  for (const m of meshes) if (m.userData.ctx) for (const ch of m.children) ch.visible = false;
   renderer.setRenderTarget(t.color); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.render(scene, cam);
   setEdges(false);
+  const ctxOn = meshes.filter(m => m.visible && m.userData.ctx);
+  for (const m of ctxOn) m.visible = false;                 // 輪郭は項目の部品だけから取る
   scene.overrideMaterial = normalMat;
   renderer.setRenderTarget(t.nd); renderer.setClearColor(0x000000, 1); renderer.clear(); renderer.render(scene, cam);
   scene.overrideMaterial = null;
+  for (const m of ctxOn) m.visible = true;
   for (const m of meshes) m.material = m.userData.mat;
   Object.assign(quadMat.uniforms.tColor, { value: t.color.texture });
   quadMat.uniforms.tNormal.value = t.nd.texture;
@@ -193,7 +200,7 @@ function draw(box, dir, up, w, h, pad) {
   const ray = new THREE.Raycaster();
   const pick = (x, y) => {
     ray.setFromCamera(new THREE.Vector2(x / w * 2 - 1, 1 - y / h * 2), cam);
-    return ray.intersectObjects(meshes.filter(m => m.visible), false)[0] || null;
+    return ray.intersectObjects(meshes.filter(m => m.visible && !m.userData.ctx), false)[0] || null;
   };
   return { cv, cam, project, pick, right, up: upv, corners, center: c };
 }
@@ -332,12 +339,13 @@ function plate(e, i) {
     sec.innerHTML = `<div class="head"><span class="no">${i + 1}</span><h2>${esc(e.title)}</h2></div><p class="empty">該当するオブジェクトがありません。</p>`;
     return sec;
   }
-  setVisible(e.objects);
+  setVisible(e.objects, e.context_objects || []);
   const box = boxOf(e.objects);
+  const outer = (e.context_objects || []).length ? boxOf(e.objects.concat(e.context_objects)) : null;
   const vw = e.view || 'front';
-  const iso = draw(box, V(/left/.test(vw) ? -1 : 1, 0.75, /rear/.test(vw) ? -1.15 : 1.15).normalize(), V(0, 1, 0), 1100, a => Math.min(1250, Math.max(560, 1100 / a)), 0.26);
+  const iso = draw(box, V(/left/.test(vw) ? -1 : 1, 0.75, /rear/.test(vw) ? -1.15 : 1.15).normalize(), V(0, 1, 0), 1100, a => Math.min(1250, Math.max(560, 1100 / a)), 0.26, outer);
   callouts(iso, e.labels || []);
-  const orthos = VIEWS.map(vw => { const d = draw(box, vw.dir, vw.up, 620, 400, 0.22); dims(d); return { ...d, cap: vw.cap }; });
+  const orthos = VIEWS.map(vw => { const d = draw(box, vw.dir, vw.up, 620, 400, 0.22, outer); dims(d); return { ...d, cap: vw.cap }; });
   const s = box.getSize(new THREE.Vector3());
   const rows = (e.labels || []).map(l => {
     const b = boxOf(l.objects), z = b.getSize(new THREE.Vector3());
