@@ -16,7 +16,7 @@ from mathutils import Matrix, Vector
 
 __all__ = ["material", "obj", "box", "cylinder", "lathe", "loft", "sweep", "tube", "quad_sphere", "cap_grid",
            "circle", "arc", "polygon", "helix", "airfoil", "ring", "nut", "washer", "bolt", "gear", "flange", "wheel",
-           "pivot", "orient", "copy", "array", "radial", "mirror", "bevel", "subsurf", "solidify", "expect", "METRIC", "HELP"]
+           "pivot", "orient", "copy", "array", "radial", "mirror", "bevel", "subsurf", "solidify", "expect", "units", "MM", "METRIC", "HELP"]
 
 
 # ---------------------------------------------------------------- マテリアルとオブジェクト
@@ -607,6 +607,16 @@ def expect(target: str = "*", size=None, floating: bool = False, tol: float = 0.
     sc["qm_expect"] = json.dumps(items)
 
 
+MM = 0.001  # ミリをメートルに直す係数。寸法をミリで書くときに 120 * qm.MM のように使う
+
+
+def units(u: str = "mm"):
+    """報告の単位を切り替える（"mm" か "cm"）。モデル自体の単位はメートルのまま"""
+    if u not in ("mm", "cm"):
+        raise ValueError('units は "mm" か "cm"')
+    bpy.context.scene["qm_units"] = u
+
+
 HELP = """qm（四角ポリゴン主体のモデリング用の関数。run_script の中でそのまま使える。Z が上、メートル単位）
 
 形を作る（どれもオブジェクトを返す。material は qm.material(...) の戻り値か、そのリスト）
@@ -646,6 +656,8 @@ HELP = """qm（四角ポリゴン主体のモデリング用の関数。run_scri
 - qm.expect("Body", size=(0.9, 0.55, 0.42))   寸法を宣言 → サーバーが照合して、違えば問題として返す
 - qm.expect("*", size=(None, None, 1.2))   全体の高さだけ宣言、のようにも書ける
 - qm.expect("Lamp", floating=True)   宙に浮いていてよい部品（それ以外は浮いていると指摘される）
+- qm.expect("*", floating=True)   全体が地面に接していなくてよい（タイヤを外した図面用など）。部品どうしのつながりは引き続き見る
+- qm.units("mm")   報告の寸法と位置をミリで出す（精密な部品や図面用）。qm.MM = 0.001 を掛けるとミリで書ける
 
 例:
   wood = qm.material("Wood", tile=0.6)
