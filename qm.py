@@ -359,14 +359,22 @@ def _annulus(bm, outer, inner, z0: float, z1: float):
         bm.faces.new((O0[j], O0[i], I0[i], I0[j]))   # 下
 
 
+def _mw(ob):
+    """オブジェクトの今の置き方（ワールド行列）。親のない物は loc/rot/scale から直接作る
+    （view_layer.update() はオブジェクトが何千もあると重いので、なるべく呼ばない）"""
+    if ob.parent is None:
+        return ob.matrix_basis.copy()
+    bpy.context.view_layer.update()
+    return ob.matrix_world.copy()
+
+
 def _place(objects, location=(0, 0, 0), rotate=None):
     """原点を基準に回してから location へ動かす（rotate は度）"""
     objects = objects if isinstance(objects, (list, tuple)) else [objects]
     if rotate:
         pivot(objects, (0, 0, 0), rotate)
-    bpy.context.view_layer.update()
     for ob in objects:
-        ob.matrix_world = Matrix.Translation(Vector(location)) @ ob.matrix_world
+        ob.matrix_world = Matrix.Translation(Vector(location)) @ _mw(ob)
     return objects
 
 
@@ -533,9 +541,8 @@ def pivot(objects, point, rotate=(0, 0, 0)):
     rot = (Matrix.Rotation(math.radians(rotate[2]), 4, "Z") @ Matrix.Rotation(math.radians(rotate[1]), 4, "Y")
            @ Matrix.Rotation(math.radians(rotate[0]), 4, "X"))
     m = Matrix.Translation(p) @ rot @ Matrix.Translation(-p)
-    bpy.context.view_layer.update()  # 置いたばかりの位置を matrix_world に反映してから回す
-    for ob in objects:
-        ob.matrix_world = m @ ob.matrix_world
+    for ob in objects:                # 置いたばかりの位置（loc/rot/scale）から回す
+        ob.matrix_world = m @ _mw(ob)
     return objects
 
 
@@ -552,9 +559,8 @@ def orient(objects, origin=(0, 0, 0), x_axis=(1, 0, 0), z_axis=(0, 0, 1)):
     y = z.cross(x)
     m = Matrix(((x.x, y.x, z.x, 0), (x.y, y.y, z.y, 0), (x.z, y.z, z.z, 0), (0, 0, 0, 1)))
     m = Matrix.Translation(Vector(origin)) @ m
-    bpy.context.view_layer.update()
     for ob in objects:
-        ob.matrix_world = m @ ob.matrix_world
+        ob.matrix_world = m @ _mw(ob)
     return objects
 
 
@@ -598,10 +604,9 @@ def radial(ob, count: int, center=(0, 0, 0), axis: str = "Z", name: str | None =
 
 def mirror(ob, axis: str = "X", about: float = 0.0, name: str | None = None):
     """左右反転した複製を作る（axis 方向に、座標 about の面で反転）。形はメッシュに焼き込み、面の向きも直す"""
-    bpy.context.view_layer.update()
     new = copy(ob, name or (ob.name[:-2] + "_R" if ob.name.endswith("_L") else ob.name + "_Mirror"))
     me = new.data
-    me.transform(ob.matrix_world)
+    me.transform(_mw(ob))
     new.matrix_world = Matrix.Identity(4)
     i = "XYZ".index(axis.upper())
     flip = Matrix.Identity(4)

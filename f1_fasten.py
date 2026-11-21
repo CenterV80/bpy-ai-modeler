@@ -69,12 +69,19 @@ def proto(kind: str, size, length: float = 0.0, mat="ti"):
     elif kind == "insert":                  # カーボンに埋める金属のねじ穴（原点は表面、-Z へ length）
         d = qm._spec(size)["d"]
         ob = qm.ring(nm, d * 0.95, d * 0.5, length, seg=12, origin="bottom", material=m, location=(0, 0, -length))
-        bpy.context.view_layer.update()
-        ob.data.transform(ob.matrix_world)
+        ob.data.transform(qm._mw(ob))
         ob.matrix_world = Matrix()
     else:
         raise ValueError(kind)
     _PROTO[key] = _keep(ob)
+    return _PROTO[key]
+
+
+def proto_mesh(key: str, make):
+    """make(名前) で作ったオブジェクトのメッシュを、key で覚えて使い回す（同じ形の部品をたくさん置くとき）"""
+    if key in _PROTO:
+        return _PROTO[key]
+    _PROTO[key] = _keep(make(key))
     return _PROTO[key]
 
 
@@ -219,7 +226,7 @@ def bvh(name: str):
     ob = bpy.data.objects[name]
     bm = bmesh.new()
     bm.from_mesh(ob.data)
-    bm.transform(ob.matrix_world)
+    bm.transform(qm._mw(ob))
     t = BVHTree.FromBMesh(bm)
     bm.free()
     _BVH[name] = t
@@ -351,22 +358,23 @@ def rod_end_geom(prefix: str):
     import numpy as np
     ball = bpy.data.objects[f"{prefix}_Ball"]
     house = bpy.data.objects[f"{prefix}_Housing"]
-    bpy.context.view_layer.update()
-    vs = [house.matrix_world @ v.co for v in house.data.vertices]
+    hw, bw = qm._mw(house), qm._mw(ball)
+    vs = [hw @ v.co for v in house.data.vertices]
     c = sum(vs, Vector()) / len(vs)
     A = np.array([tuple(v - c) for v in vs])
     w, V = np.linalg.eigh(A.T @ A)
     ax = Vector(V[:, 0]).normalized()                    # 薄い輪のいちばん薄い向きが軸
-    bv = [ball.matrix_world @ v.co - c for v in ball.data.vertices]
+    bv = [bw @ v.co - c for v in ball.data.vertices]
     half = max(abs(ax.dot(v)) for v in bv)
     rad = [(v - ax * ax.dot(v)).length for v in bv]
     sh = bpy.data.objects.get(f"{prefix}_Shank")
     if sh is not None:
-        sv = [sh.matrix_world @ v.co for v in sh.data.vertices]
+        swm = qm._mw(sh)
+        sv = [swm @ v.co for v in sh.data.vertices]
         shank = sum(sv, Vector()) / len(sv) - c
         shank = (shank - ax * shank.dot(ax)).normalized()
     else:
-        shank = (house.matrix_world.to_3x3() @ Vector((-1, 0, 0))).normalized()
+        shank = (hw.to_3x3() @ Vector((-1, 0, 0))).normalized()
     return c, ax, half, max(rad), min(rad) * 2, shank
 
 
@@ -408,8 +416,8 @@ def hull2d(points):
 def bbox(name: str):
     """オブジェクトのワールド座標の外接箱 (最小, 最大)"""
     ob = bpy.data.objects[name]
-    bpy.context.view_layer.update()
-    vs = [ob.matrix_world @ v.co for v in ob.data.vertices]
+    mw = qm._mw(ob)
+    vs = [mw @ v.co for v in ob.data.vertices]
     return (Vector([min(v[i] for v in vs) for i in range(3)]), Vector([max(v[i] for v in vs) for i in range(3)]))
 
 
