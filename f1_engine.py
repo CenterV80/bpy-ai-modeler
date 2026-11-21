@@ -21,7 +21,7 @@ import f1
 
 __all__ = ["v6_frame", "v6_mains", "v6_block", "v6_heads", "v6_head_gaskets", "v6_cam_covers", "v6_front_cover",
            "v6_sump", "v6_crankshaft", "v6_conrods", "v6_pistons", "v6_valves", "v6_camshafts", "v6_studs",
-           "v6_plugs_injectors", "v6_pumps", "water_pump_point", "v6_oil_jets", "v6_engine_real"]
+           "v6_plugs_injectors", "v6_pumps", "water_pump_point", "v6_oil_jets", "v6_engine_real", "HEAD_TOP"]
 
 MM = 0.001
 
@@ -326,11 +326,15 @@ def v6_cam_covers(mats=None):
         cut = [inner] + [_cyl(f"_coil{i}", 14, h0 - 5, h1 + 5, y=y, seg=24) for i, y in enumerate(ys)]
         qm.cut(cov, cut)
         bolts = []
-        for k, y in enumerate((yb0 + 20, (yb0 + yr) / 2, yr - 30)):
-            for x in (-60, 60):
-                b = qm.bolt(f"Engine_CamCoverBolt{tag}{k}{'ab'[x > 0]}", "M6", 0.03, material=m["steel"])
-                qm._place(b, (x * MM, y * MM, (h0 + 8) * MM))
-                bolts.append(b)
+        n = 8                                         # ふちのボルト（左右 8 本ずつ、カバーの縁の肉の中を通してヘッドへ）
+        for k in range(n):
+            y = yb0 + 18 + (yr - 10 - 18 - (yb0 + 18)) * k / (n - 1)
+            for x in (-64, 64):
+                bolts += f1.fasten.fasten(f"Engine_CamCoverBolt{tag}{k + 1}{'ab'[x > 0]}", (x * MM, y * MM, (h0 + 6) * MM), (0, 0, -1),
+                                          0.006, "M6", nut=False, washer=False, mat="steel")
+        for i, y in enumerate(ys):                    # 点火コイルを留めるボルト（1 本ずつ）
+            bolts += f1.fasten.fasten(f"Engine_CoilBolt{tag}{i + 1}", (22 * MM, y * MM, h1 * MM), (0, 0, -1), 0.004, "M5",
+                                      nut=False, washer=True, mat="steel")
         coils = []
         for i, y in enumerate(ys):
             c = qm.cylinder(f"Engine_Coil{tag}{i + 1}", 0.0135, 0.075, seg=16, location=(0, y * MM, (HEAD_TOP + 2) * MM),
