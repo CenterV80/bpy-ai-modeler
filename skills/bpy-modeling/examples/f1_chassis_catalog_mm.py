@@ -555,6 +555,142 @@ for tg in ("FL", "FR", "RL", "RR"):
     FX.bolt_circle(f"Disc_{tg}_BellBolt", DCw + OUT * 0.003, -OUT, 0.053, 6, 0.014, "M6", start=math.pi / 6, nut=True, washer=False,
                    x_axis=(0, 1, 0))
 
+# ---- エンジン：前のカバー・ベッドプレート・ポンプ・吸排気のフランジ・ギア・フライホイールとクラッチ
+V6 = f1.V6
+HT = f1.HEAD_TOP                                   # ヘッドの上面（クランク軸から）
+yb0e = YF + 40
+# 前のカバーのふち（クランクケースの下半分と、左右のバンクの上まで。カバーの前の壁からブロックへ通す）
+ring_pts = [(-122, CZ - 70), (122, CZ - 70)]
+for bank in (1, -1):
+    for t, u in ((60, -70), (HT + 40, -70), (HT + 40, 70)) if bank > 0 else ((HT + 40, 70), (HT + 40, -70), (60, -70)):
+        q = f1.v6_point(bank, t, u, YF)
+        ring_pts.append((q.x, q.z))
+pts2 = FX.perimeter(FX.hull2d(ring_pts), 26, inset=6)
+for k, q in enumerate(pts2):
+    FX.fasten(f"Engine_FrontCoverBolt{k + 1}", (q.x * MM, (YF + 4) * MM, q.y * MM), (0, 1, 0), 0.036, "M6", nut=False, washer=False, mat="steel")
+# ベッドプレートとブロック（下から。頭はベッドプレートの座ぐりの中）
+for k, y in enumerate([yb0e + 25 + (YGB - 25 - yb0e - 25) * i / 6 for i in range(7)]):
+    for j, x in enumerate((-118, 118)):
+        FX.fasten(f"Engine_BedplateBolt{k + 1}{'ab'[j]}", P(x, y, CZ - 78 + 7), (0, 0, 1), 0.070, "M8", nut=False, washer=False, mat="steel")
+# ウォーターポンプ（ブロックの横に、つばとボルト 3 本）
+for bank, tg in ((-1, "L"), (1, "R")):
+    wc, wo = f1.water_pump_point(bank)
+    fl = qm.ring(f"Engine_WaterPump{tg}_Flange", 0.056, 0.030, 0.006, seg=32, origin="bottom", material=mats["titanium"])
+    fl.matrix_world = FX.frame(wc * MM - wo * 0.020, wo, (0, 1, 0))
+    FX.bolt_circle(f"Engine_WaterPump{tg}_Bolt", wc * MM - wo * 0.014, -wo, 0.050, 3, 0.006, "M6", start=math.pi / 6, x_axis=(0, 1, 0), mat="steel")
+# スカベンジポンプ：前後のふた（ボルト 6 本ずつ）と、圧送の段（オイルを主軸受へ送るロータ。スカベンジの 3 段の後ろ）
+sx, sz = 150, CZ - 30
+for tg, y, ax in (("Front", yb0e + 20, (0, 1, 0)), ("Rear", YGB - 30, (0, -1, 0))):
+    FX.bolt_circle(f"Engine_ScavengePump_{tg}Bolt", P(sx, y, sz), ax, 0.0235, 6, 0.008, "M4", x_axis=(1, 0, 0), mat="steel")
+_mains, _yc = f1.v6_mains()
+yp = (max(_yc) - 8 + 8 + (YGB - 36)) / 2 + 4
+g = qm.gear("Engine_PressureRotor", 6, 0.006, 0.012, bore=0.004, material=steel)
+qm.orient(g, origin=P(sx, yp, sz), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
+g2 = qm.ring("Engine_PressureRotor_Outer", 0.0205, 0.0175, 0.012, seg=32, material=steel)
+qm.orient(g2, origin=P(sx, yp, sz), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
+# 燃料の高圧ポンプ（前のカバーにつばとボルト 3 本）
+fl = qm.ring("Engine_FuelPumpHP_Flange", 0.032, 0.022, 0.006, seg=24, origin="bottom", material=steel)
+fl.matrix_world = FX.frame(P(0, YF + 40, CZ + 200), (0, 1, 0))
+FX.bolt_circle("Engine_FuelPumpHP_Bolt", P(0, YF + 46, CZ + 200), (0, -1, 0), 0.027, 3, 0.006 + 0.004, "M5", start=math.pi / 2, x_axis=(1, 0, 0), mat="steel")
+# 吸気のポートのつば（2 本ずつ）と、スロットルのつば（4 本）
+tc_ = V6["deck"] + V6["head"] * 0.5
+for bank, i, y in f1.v6_cylinders():
+    tg = f"{'L' if bank < 0 else 'R'}{i + 1}"
+    port = f1.v6_point(bank, tc_, V6["head_w"] / 2 - 3, y) * MM
+    up = (Vector((-bank * 0.707, 0, 0.707)) + Vector((0, 0, 1))).normalized()
+    m_ = FX.frame(port + up * 0.002, up, (0, 1, 0))
+    for j, (a, b) in enumerate(((0.020, 0.020), (-0.020, -0.020))):
+        FX.fasten(f"Intake_PortFlange{tg}_Bolt{j + 1}", m_ @ Vector((a, b, 0.004)), -up, 0.008, "M6", nut=False, washer=False, mat="steel")
+    # 排気のつば：スタッド 2 本とナット
+    portx = f1.v6_point(bank, tc_, -(V6["head_w"] / 2 - 3), y) * MM
+    outx = (f1.v6_point(bank, tc_, -1000, y) - f1.v6_point(bank, tc_, 0, y)).normalized()
+    mx = FX.frame(portx, outx, (0, 1, 0))
+    for j, (a, b) in enumerate(((0.018, 0.018), (-0.018, -0.018))):
+        FX.stud_nut(f"Exhaust_Flange{tg}_Stud{j + 1}", mx @ Vector((a, b, -0.004)), outx, 0.008, "M8", mat="steel")
+ys_all = [y for _, _, y in f1.v6_cylinders()]
+ty0 = min(ys_all) - 55
+FX.bolt_circle("Intake_Throttle_Bolt", P(0, ty0 - 18 - 22.5, CZ + 330), (0, 1, 0), 0.040, 4, 0.045, "M5", start=math.pi / 4, x_axis=(1, 0, 0), mat="steel")
+# 燃料レールの台（2 個ずつ、ボルト 1 本）
+for bank, tg in ((-1, "L"), (1, "R")):
+    ysb = [y for b, i, y in f1.v6_cylinders() if b == bank]
+    d_, inner_ = f1.v6_frame(bank)
+    for j, y in enumerate((ysb[0] + 20, ysb[-1] - 20)):
+        q = f1.v6_point(bank, V6["deck"] + 37, 104, y) * MM
+        down = -d_
+        bk = qm.box(f"FuelRail_{tg}_Bracket{j + 1}", (0.016, 0.012, 0.026), origin="center", material=steel)
+        bk.matrix_world = FX.frame(q + down * 0.018, down, (0, 1, 0))
+        FX.fasten(f"FuelRail_{tg}_Bracket{j + 1}Bolt", q + down * 0.008 + inner_ * 0.0, down, 0.026, "M5", nut=False, washer=True, mat="steel")
+# ギア：カムのギア（3 本ずつ）、アイドラーの軸、クランクの前の端
+for nm in ("Cam_LInGear", "Cam_LExGear", "Cam_RInGear", "Cam_RExGear"):
+    lo_, hi_ = FX.bbox(nm)
+    c_ = (lo_ + hi_) / 2
+    FX.bolt_circle(f"{nm}_Bolt", Vector((c_.x, lo_.y, c_.z)), (0, 1, 0), 0.010, 3, hi_.y - lo_.y, "M5", x_axis=(1, 0, 0), mat="steel")
+for nm in [o.name for o in bpy.context.scene.objects if o.name.startswith("GearTrain_") and o.name.endswith("Shaft")] + ["MGUK_IdlerShaft"]:
+    lo_, hi_ = FX.bbox(nm)
+    c_ = (lo_ + hi_) / 2
+    FX.fasten(f"{nm}_Bolt", Vector((c_.x, lo_.y, c_.z)), (0, 1, 0), 0.010, "M6", nut=False, washer=True, mat="steel")
+lo_, hi_ = FX.bbox("Crank_Shaft")
+FX.fasten("Crank_NoseBolt", Vector((0, lo_.y, CZ * MM)), (0, 1, 0), 0.012, "M12", nut=False, washer=True, mat="steel")
+# フライホイールをクランクの後ろの端へ（6 本）、クラッチのバスケットをフライホイールへ（6 本）
+lo_, hi_ = FX.bbox("Clutch_Flywheel")
+FX.bolt_circle("Clutch_FlywheelBolt", Vector((0, hi_.y, CZ * MM)), (0, -1, 0), 0.018, 6, hi_.y - lo_.y, "M8", x_axis=(1, 0, 0), mat="steel")
+lo_b, hi_b = FX.bbox("Clutch_Basket")
+FX.bolt_circle("Clutch_BasketBolt", Vector((0, lo_b.y, CZ * MM)), (0, -1, 0), (hi_b.x - lo_b.x) / 2 * 0.86, 6, 0.006, "M5",
+               start=math.pi / 6, x_axis=(1, 0, 0), mat="steel", nut=False)
+# MGU-K：前の端のつばを、後ろの隔壁へボルト 6 本で留める
+mgf = qm.ring("MGUK_MountFlange", 0.092, 0.062, 0.006, seg=32, origin="bottom", material=titan)
+mgf.matrix_world = FX.frame(MG + Vector((0, 0.175 - 0.002, 0)), (0, 1, 0), (1, 0, 0))
+FX.bolt_circle("MGUK_MountBolt", MG + Vector((0, 0.175 - 0.002, 0)), (0, 1, 0), 0.084, 6, 0.006 + 0.010, "M6", start=math.pi / 6,
+               x_axis=(1, 0, 0), nut=False, washer=True, drill=("Cell_RearBulkhead",))
+FX.reserve("Cell_RearBulkhead", MG + Vector((0, 0.15, 0)), MG + Vector((0, 0.23, 0)), 0.016)     # 軸が隔壁を通る穴
+# ギアのカバー（MGU-K とクランクのギア）：ふちにボルト
+circ = [(0, CZ * MM, 0.077 + 0.008), (I2.x * MM, I2.y * MM, 0.0495 + 0.008), (MG.x, MG.z, 0.052 + 0.008)]
+hp = FX.hull2d([(x + r * math.cos(2 * math.pi * k / 48), z + r * math.sin(2 * math.pi * k / 48)) for x, z, r in circ for k in range(48)])
+for k, q in enumerate(FX.perimeter(hp, 16, inset=0.005)):
+    FX.fasten(f"Engine_GearCoverBolt{k + 1}", (q.x, (YF + 33) * MM, q.y), (0, -1, 0), 0.008, "M5", nut=False, washer=False, mat="steel")
+# ターボ：V バンド（タービンの入口 2・コンプレッサーの出口・タービンの出口）と、台のボルト
+def turbo_w(x, y, z):                       # ターボの局所座標 → 車（x はそのまま、局所の z が車の +Y、局所の y が車の -Z）
+    return TC + Vector((x, z, -y))
+FX.vband("Turbo_VbandInL", turbo_w(-0.120, 0, 0.060), (1, 0, 0), 0.030)
+FX.vband("Turbo_VbandInR", turbo_w(0.120, 0, 0.060), (1, 0, 0), 0.030)
+FX.vband("Turbo_VbandComp", turbo_w(0.118, 0.045, -0.060), (1, 0, 0), 0.034)
+FX.vband("Turbo_VbandOut", turbo_w(0, 0, 0.138), (0, 1, 0), 0.050)
+for k, dx in enumerate((-0.012, 0.012)):
+    FX.fasten(f"Turbo_Bracket_BoltLow{k + 1}", Vector((dx, 3.06, 0.455 + 0.012)), (0, 0, -1), 0.012, "M6", nut=False, washer=True, drill=("Gearbox",))
+# 後ろの衝撃吸収構造をギアボックスへ（4 本）。ギアボックスの抜き・入れの栓
+lo_, hi_ = FX.bbox("RearCrash")
+cy0 = lo_.y
+cc = (lo_ + hi_) / 2
+for k, (u, v) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1))):
+    q = Vector((cc.x + u * (hi_.x - lo_.x) * 0.3, cy0 + 0.012, cc.z + v * (hi_.z - lo_.z) * 0.3))
+    FX.fasten(f"RearCrash_Bolt{k + 1}", q, (0, -1, 0), 0.012 + 0.006, "M8", nut=False, washer=True, drill=("Gearbox",))
+for nm, start, d_ in (("Gearbox_DrainPlug", Vector((0, 3.25, 0.05)), Vector((0, 0, 1))), ("Gearbox_FillPlug", Vector((0.30, 3.15, 0.33)), Vector((-1, 0, 0)))):
+    hit = FX.ray(start, d_, ["Gearbox"], far=0.5)
+    if hit:
+        FX.fasten(nm, hit[0], d_, 0.008, "M12", nut=False, washer=True, mat="steel")
+# ギアボックスのオイルポンプ（ケースの左の横、オイルクーラーの戻りの近く。形と位置は推定）
+hit = FX.ray(Vector((-0.40, 3.10, 0.24)), (1, 0, 0), ["Gearbox"], far=0.6)
+if hit:
+    gpc = hit[0] + Vector((-0.024, 0, 0))
+    qm.cylinder("Gearbox_OilPump", 0.024, 0.050, seg=24, axis="Y", location=tuple(gpc), material=mats["titanium"])
+    qm.cylinder("Gearbox_OilPump_Drive", 0.008, 0.020, seg=12, axis="X", location=tuple(gpc + Vector((0.020, 0, 0))), material=steel)
+    for k, dy in enumerate((-0.018, 0.018)):
+        FX.fasten(f"Gearbox_OilPump_Bolt{k + 1}", gpc + Vector((-0.024, dy, 0.016)), (1, 0, 0), 0.010, "M5", nut=False, washer=True, drill=("Gearbox",))
+
+# ---- 冷却器の台（サバイバルセルの側と冷却器の側に 1 本ずつ）
+for o in [o.name for o in bpy.context.scene.objects if o.name.startswith("CoolerBracket_") or o.name == "GearboxOilCooler_Bracket"]:
+    lo_, hi_ = FX.bbox(o)
+    c_ = (lo_ + hi_) / 2
+    for j, x in enumerate((lo_.x + 0.010, hi_.x - 0.010)):
+        FX.fasten(f"{o}_Bolt{j + 1}", Vector((x, c_.y, hi_.z)), (0, 0, -1), hi_.z - lo_.z, "M6", nut=True, washer=True)
+
+# ---- 油圧・潤滑の足りなかった管：ターボの軸受へのオイル（行きと戻り）、カムカバーからオイルタンクへのブリーザー
+route("TurboOilFeed", [P(205, 2480, 300), P(230, 2700, 480), P(150, 2950, 660), P(20, 3050, 670), TC + Vector((0, -0.010, 0.048))], r=0.004, kind="oil", mats=mats)
+route("TurboOilDrain", [TC + Vector((0, 0.010, -0.048)), P(0, 3070, 545), P(-60, 2980, 470), P(-150, 2890, CZ - 10), P(-150, 2870, CZ - 30)], r=0.007, kind="oil", mats=mats)
+for bank, tg in ((-1, "L"), (1, "R")):
+    q = f1.v6_point(bank, HT + 52, -40, 2560) * MM
+    route(f"Breather{tg}", [q, q + Vector((0, -0.02, 0.02)), P(bank * 60, 2420, 640), P(70, (2.25 + 2.49) / 2 / MM, 600)], r=0.006, kind="oil", mats=mats)
+
 # ---- 予約した穴を、部品ごとにまとめてあける
 print("穴をあけた部品:", FX.drill_all())
 print("留め具の数:", FX.report())
@@ -627,9 +763,11 @@ qm.catalog("intake", "吸気", "ドライバーの頭の上の吸気口からエ
 qm.catalog("exhaust", "排気", "左右 3 本ずつの管を集合部でまとめ、ギアボックスの上のタービンへ。出口はテールパイプ 1 本。",
            parts=["Exhaust_", "Tailpipe"], labels={"Exhaust_PrimaryL1": "マニホールド", "Exhaust_CollectorL": "集合部",
                                                    "Exhaust_ToTurboR": "タービンへの管", "Tailpipe": "テールパイプ"}, group=G4)
-qm.catalog("turbo", "ターボチャージャー", "排気でタービンを回し、同じ軸のコンプレッサーで吸気を圧縮する。2026 年は MGU-H がなくなった。",
+qm.catalog("turbo", "ターボチャージャー", "排気でタービンを回し、同じ軸のコンプレッサーで吸気を圧縮する。2026 年は MGU-H がなくなった。"
+           "管との継ぎ目は V バンドクランプで締める。軸受へはエンジンからオイルを送り、下から戻す（管の道すじは推定）。",
            parts=["Turbo", "Wastegate"], labels={"Wastegate": "ウェイストゲート", "Turbo_Compressor": "コンプレッサー", "Turbo_Turbine": "タービン", "Turbo_Bearing": "軸受ハウジング",
-                                     "Turbo_CompOutlet": "圧縮空気の出口", "Turbo_TurbineInletL": "排気の入口"}, group=G4)
+                                     "Turbo_CompOutlet": "圧縮空気の出口", "Turbo_TurbineInletL": "排気の入口",
+                                     "Turbo_VbandInL": "V バンド", "TurboOilFeed": "オイル（行き）", "TurboOilDrain": "オイル（戻り）"}, group=G4)
 qm.catalog("mguk", "MGU-K", "減速で電気を回収し、加速で最大 350kW を足すモーター発電機。サバイバルセルの中（燃料タンクの後ろ）に置き、"
            "隔壁を通る軸のギアで、クランクの前のギアからアイドラーを介して回る。セルの中に置くのは 2026 年の報道による（規定の本文は未確認）。寸法は推定。",
            parts=["MGUK", "Crank_Gear"],

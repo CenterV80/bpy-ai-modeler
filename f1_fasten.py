@@ -387,6 +387,48 @@ def rod_end_joint(prefix: str, host=(), bolted: bool = True, outward: bool = Fal
     return joint(prefix, c, ax, half, rr, size, host=host, bolted=bolted, **kw)
 
 
+def hull2d(points):
+    """2D の点の凸包（反時計回り）"""
+    pts = sorted(set((round(p[0], 6), round(p[1], 6)) for p in points))
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
+def bbox(name: str):
+    """オブジェクトのワールド座標の外接箱 (最小, 最大)"""
+    ob = bpy.data.objects[name]
+    bpy.context.view_layer.update()
+    vs = [ob.matrix_world @ v.co for v in ob.data.vertices]
+    return (Vector([min(v[i] for v in vs) for i in range(3)]), Vector([max(v[i] for v in vs) for i in range(3)]))
+
+
+def vband(name: str, center, axis, r: float, width: float = 0.010, mat="steel"):
+    """V バンドクランプ（管と管の継ぎ目を締める輪と、締めるボルト・ナット）。center は継ぎ目の中心、axis は管の向き、r は管の外の半径"""
+    a = Vector(axis).normalized()
+    ring_ = qm.ring(f"{name}", r + 0.005, r, width, seg=24, origin="center", material=_mat(mat))
+    ring_.matrix_world = frame(center, a)
+    side = a.orthogonal().normalized()
+    lug_c = Vector(center) + side * (r + 0.008)
+    t = a.cross(side).normalized()
+    lugs = [qm.box(f"{name}_Lug{k + 1}", (0.010, 0.004, width), origin="center", material=_mat(mat)) for k in range(2)]
+    for k, lg in enumerate(lugs):
+        lg.matrix_world = frame(lug_c + t * (0.004 if k else -0.004) * 1.5, a, side)
+    out = [ring_] + lugs
+    out += fasten(f"{name}_T", lug_c - t * 0.009, t, 0.018, "M5", nut=True, washer=False, mat=mat)
+    return out
+
+
 def report():
     """置いた留め具の数（種類ごと）"""
     return dict(sorted(COUNT.items()))
