@@ -60,6 +60,10 @@
     border-radius:6px; margin:0; font:11px/1.5 ui-monospace,Menlo,Consolas,monospace; }
   #code { white-space:pre; word-break:normal; }
   .empty { color:var(--sub); font-size:12px; }
+  ul.mats { list-style:none; margin:0; padding:0; font-size:12px; }
+  ul.mats li { display:flex; align-items:center; gap:8px; padding:3px 0; border-bottom:1px solid var(--line); }
+  ul.mats .sw { width:14px; height:14px; border-radius:3px; border:1px solid var(--line); flex:none; background-size:cover; }
+  ul.mats .n { flex:1; } ul.mats .d { color:var(--sub); }
   @media (max-width:820px) {
     #app { grid-template-columns:1fr; grid-template-rows:60vh auto; height:auto; }
     #side { border-left:0; border-top:1px solid var(--line); }
@@ -78,6 +82,7 @@
     <div id="tools">
       <button id="tShade" class="on">シェード</button>
       <button id="tWire" class="on">ワイヤー</button>
+      <button id="tTex" class="on" title="オフにすると粘土色で形だけを見る">テクスチャ</button>
       <button id="tFrame">全体表示</button>
     </div>
     <div id="caption"></div>
@@ -120,10 +125,16 @@
     </section>
 
     <section>
+      <h2>マテリアル</h2>
+      <ul id="materials" class="mats"><li class="empty">—</li></ul>
+      <p class="note">textures フォルダの画像と同じ名前のマテリアルに、その画像が貼られます。UV は自動で作ります。</p>
+    </section>
+
+    <section>
       <h2>書き出し</h2>
       <div class="row">
         <a class="btn" data-fmt="fbx" aria-disabled="true">FBX</a>
-        <a class="btn" data-fmt="obj" aria-disabled="true">OBJ</a>
+        <a class="btn" data-fmt="obj" aria-disabled="true">OBJ（zip）</a>
         <a class="btn" data-fmt="glb" aria-disabled="true">GLB</a>
       </div>
       <p class="note">単位はメートル。FBX はセンチ単位で書き出すので、Maya や Unity でそのままの大きさになります。ファイルは output フォルダにも残ります。</p>
@@ -180,7 +191,14 @@ new ResizeObserver(resize).observe(view);
 renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
 
 const loader = new GLTFLoader();
-let shaded = null, wire = null, showShade = true, showWire = true, framed = false;
+let shaded = null, wire = null, showShade = true, showWire = true, showTex = true, framed = false;
+const clay = new THREE.MeshStandardMaterial({
+  color: 0xb9bec8, roughness: .55, metalness: 0,
+  polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+});
+function applyLook() {
+  shaded?.traverse(o => { if (o.isMesh) o.material = showTex ? o.userData.orig : clay; });
+}
 
 function dispose(obj) {
   obj?.traverse(o => {
@@ -199,10 +217,12 @@ async function loadModel(run) {
       const gltf = await loader.parseAsync(await res.arrayBuffer(), '');
       nextShaded = gltf.scene;
       nextShaded.traverse(o => {
-        if (o.isMesh) o.material = new THREE.MeshStandardMaterial({
-          color: 0xb9bec8, roughness: .55, metalness: 0,
-          polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+        if (!o.isMesh) return;
+        // ワイヤーが面に埋もれないよう、元のマテリアルにも少し奥へずらす設定を足す
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => {
+          m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1;
         });
+        o.userData.orig = o.material;
       });
     }
   }
@@ -214,10 +234,10 @@ async function loadModel(run) {
     g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     nextWire = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x1b1e24, transparent: true, opacity: .85 }));
   }
-  if (shaded) { scene.remove(shaded); dispose(shaded); }
+  if (shaded) { shaded.traverse(o => { if (o.isMesh) o.material = o.userData.orig; }); scene.remove(shaded); dispose(shaded); }
   if (wire) { scene.remove(wire); dispose(wire); }
   shaded = nextShaded; wire = nextWire;
-  if (shaded) { shaded.visible = showShade; scene.add(shaded); }
+  if (shaded) { shaded.visible = showShade; scene.add(shaded); applyLook(); }
   if (wire) { wire.visible = showWire; scene.add(wire); }
   $('empty').hidden = !!(shaded || wire);
   if (!framed && (shaded || wire)) { frameAll(); framed = true; }
@@ -246,6 +266,7 @@ function toggle(btn, key) {
 toggle($('tShade'), 'shade');
 toggle($('tWire'), 'wire');
 $('tFrame').onclick = frameAll;
+$('tTex').onclick = () => { showTex = !showTex; $('tTex').classList.toggle('on', showTex); applyLook(); };
 renderer.domElement.addEventListener('dblclick', frameAll);
 
 /* ---------------------------------------------------------------- 画面 */
@@ -305,11 +326,19 @@ async function select(id) {
   $('report').className = ''; $('report').textContent = r.report;
   showStats(r.stats, r.ok ? r.problems : [r.output.trim().split('\n').slice(-1)[0] || 'エラー']);
   document.querySelectorAll('[data-fmt]').forEach(a => {
-    const ok = r.files.includes(a.dataset.fmt);
+    const fmt = a.dataset.fmt, ok = r.files.includes(fmt);
+    const file = fmt === 'obj' ? 'model_obj.zip' : `model.${fmt}`;
     a.setAttribute('aria-disabled', String(!ok));
-    if (ok) { a.href = `/api/runs/${r.id}/model.${a.dataset.fmt}`; a.download = `run${String(r.id).padStart(4, '0')}_model.${a.dataset.fmt}`; }
+    if (ok) { a.href = `/api/runs/${r.id}/${file}`; a.download = `run${String(r.id).padStart(4, '0')}_${file}`; }
     else a.removeAttribute('href');
   });
+  const mats = r.materials || [];
+  $('materials').innerHTML = mats.length ? mats.map(m => {
+    const c = m.color.map(x => Math.round(Math.min(1, Math.max(0, x)) ** (1 / 2.2) * 255)).join(',');
+    const sw = m.texture && !m.texture.startsWith('（') ? `background-image:url(/textures/${encodeURIComponent(m.texture)})` : `background:rgb(${c})`;
+    const d = m.texture ? `${esc(m.texture)} ／ 1枚 ${m.tile}m` : '色のみ';
+    return `<li><span class="sw" style="${sw}"></span><span class="n">${esc(m.name)}</span><span class="d">${d}</span></li>`;
+  }).join('') : '<li class="empty">マテリアルなし（粘土色で表示）</li>';
   if (r.ok) await loadModel(r);
 }
 

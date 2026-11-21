@@ -64,6 +64,10 @@ OUT = Path(ARGS.out).resolve()
 RUNS_DIR = OUT / "runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 FORMATS = ("glb", "fbx", "obj")
+TEX_DIR = Path(os.environ.get("BPY_MODELER_TEXTURES", str(ROOT / "textures"))).resolve()
+TEX_EXT = (".png", ".jpg", ".jpeg", ".tga", ".bmp", ".tif", ".tiff", ".webp")
+# 起動時に作るサンプルのテクスチャと、1枚が何メートル分か（マテリアルの "tile" で上書きできる）
+SAMPLE_TILES = {"Brick": 1.0, "Concrete": 2.0, "Wood": 1.0, "UVGrid": 1.0}
 TRI_LIMIT = 0.10      # 三角ポリゴンの割合がこれを超えたら問題として返す
 FACE_LIMIT = 300_000  # 面がこれより多ければ問題として返す
 
@@ -223,8 +227,10 @@ def export_all(folder: Path) -> list[str]:
         "fbx": lambda p: bpy.ops.export_scene.fbx(filepath=p, use_mesh_modifiers=True, object_types={"MESH"},
                                                   apply_scale_options="FBX_SCALE_NONE", apply_unit_scale=True,
                                                   bake_space_transform=True,
-                                                  add_leaf_bones=False, bake_anim=False),
-        "obj": lambda p: bpy.ops.wm.obj_export(filepath=p, apply_modifiers=True, export_materials=False),
+                                                  add_leaf_bones=False, bake_anim=False,
+                                                  path_mode="COPY", embed_textures=True),  # テクスチャは FBX に埋め込む
+        # OBJ はテクスチャを埋め込めないので、MTL と画像を同じフォルダに書き、まとめて zip にする
+        "obj": lambda p: bpy.ops.wm.obj_export(filepath=p, apply_modifiers=True, export_materials=True, path_mode="COPY"),
     }
     for fmt, fn in jobs.items():
         try:
@@ -232,7 +238,168 @@ def export_all(folder: Path) -> list[str]:
                 fn(str(folder / f"model.{fmt}"))
         except Exception as e:
             errs.append(f"{fmt.upper()} の書き出しに失敗: {e}")
+    obj = folder / "model.obj"
+    if obj.exists():
+        import zipfile
+        with zipfile.ZipFile(folder / "model_obj.zip", "w", zipfile.ZIP_DEFLATED) as z:
+            for f in sorted(folder.iterdir()):
+                if f.name in ("model.obj", "model.mtl") or f.suffix.lower() in TEX_EXT:
+                    z.write(f, f.name)
     return errs
+
+
+# ---------------------------------------------------------------- マテリアルとテクスチャ
+
+def _periodic_noise(np, rng, n: int, sigma: float, sigma_v: float | None = None):
+    """つなぎ目なく繰り返せるなめらかなノイズ（0〜1）。sigma_v を大きくすると縦に流れる筋になる"""
+    sv = sigma if sigma_v is None else sigma_v
+    f = np.fft.fft2(rng.standard_normal((n, n)))
+    kv, ku = np.fft.fftfreq(n)[:, None] ** 2, np.fft.fftfreq(n)[None, :] ** 2
+    a = np.real(np.fft.ifft2(f * np.exp(-2 * math.pi ** 2 * (sigma ** 2 * ku + sv ** 2 * kv))))
+    return (a - a.min()) / (a.max() - a.min() + 1e-9)
+
+
+def make_sample_textures() -> None:
+    """textures フォルダに、なければサンプルのテクスチャを作る（つなぎ目なく繰り返せる 512px）"""
+    import numpy as np
+    TEX_DIR.mkdir(parents=True, exist_ok=True)
+    n = 512
+    rng = np.random.default_rng(7)
+    u = np.arange(n)[None, :].repeat(n, 0) / n   # 横 0〜1
+    v = np.arange(n)[:, None].repeat(n, 1) / n   # 縦 0〜1（下から）
+
+    def save(name, rgb):
+        path = TEX_DIR / f"{name}.png"
+        if path.exists():
+            return
+        img = bpy.data.images.new(f"_{name}", n, n, alpha=False)
+        img.pixels = np.dstack([np.clip(rgb, 0, 1), np.ones((n, n))]).astype(np.float32).ravel()
+        img.filepath_raw, img.file_format = str(path), "PNG"
+        img.save()
+        bpy.data.images.remove(img)
+
+    # レンガ（1m 角に 13 段 × 4 個、半分ずらし、目地 1cm）
+    rows, cols = 13, 4
+    r = np.floor(v * rows).astype(int)
+    uu = (u + (r % 2) * 0.5 / cols) % 1.0
+    c = np.floor(uu * cols).astype(int)
+    mortar = ((v * rows) % 1.0 < 0.13) | ((uu * cols) % 1.0 < 0.035)
+    tone = rng.uniform(-0.08, 0.08, (rows, cols))[r % rows, c % cols]
+    grain = _periodic_noise(np, rng, n, 2.0) - 0.5
+    brick = np.dstack([0.56 + tone, 0.27 + tone * 0.6, 0.19 + tone * 0.4]) + grain[..., None] * 0.08
+    save("Brick", np.where(mortar[..., None], np.array([0.72, 0.70, 0.66]) + grain[..., None] * 0.05, brick))
+
+    # コンクリート（2m 角。大きなむらと細かい粒）
+    big, fine = _periodic_noise(np, rng, n, 40.0), _periodic_noise(np, rng, n, 1.0)
+    g = 0.52 + (big - 0.5) * 0.12 + (fine - 0.5) * 0.10
+    save("Concrete", np.dstack([g, g * 0.99, g * 0.96]))
+
+    # 木目（1m 角に板 5 枚。木目は板の長さ方向＝縦に流れる。板ごとに色を少し変える）
+    planks = 5
+    pk = np.floor(u * planks).astype(int)
+    x = (u * planks) % 1.0                                   # 板の中の横位置
+    warp = _periodic_noise(np, rng, n, 30.0, 90.0) - 0.5     # 木目のゆるいうねり
+    grain = 0.5 + 0.5 * np.sin(2 * math.pi * (x * 7 + warp * 1.5 + pk * 0.37))
+    streak = _periodic_noise(np, rng, n, 0.7, 25.0) - 0.5    # 縦に伸びた細い筋
+    shade = rng.uniform(-0.06, 0.06, planks)[pk % planks]
+    seam = x < 0.012
+    base = 0.45 + shade + grain ** 3 * -0.10 + streak * 0.10
+    wood = np.dstack([base * 1.18, base * 0.82, base * 0.52])
+    save("Wood", np.where(seam[..., None], wood * 0.55, wood))
+
+    # 確認用のグリッド（8 × 8 マス。列で色、行で明るさが変わるので向きと伸びが分かる）
+    cu, cv = np.floor(u * 8), np.floor(v * 8)
+    hue = cu / 8
+    k_ = (np.dstack([hue * 6, hue * 6 + 4, hue * 6 + 2]) % 6)
+    col = 1 - np.clip(np.minimum(k_, 4 - k_), 0, 1)
+    col = 0.35 + col * 0.45 * (0.6 + 0.4 * ((cu + cv) % 2))[..., None] + (cv / 8)[..., None] * 0.15
+    line = ((u * 8) % 1.0 < 0.02) | ((v * 8) % 1.0 < 0.02)
+    save("UVGrid", np.where(line[..., None], 0.95, col))
+
+
+def texture_files() -> dict[str, Path]:
+    if not TEX_DIR.exists():
+        return {}
+    return {f.stem.lower(): f for f in sorted(TEX_DIR.iterdir()) if f.suffix.lower() in TEX_EXT}
+
+
+def _base(name: str) -> str:
+    return re.sub(r"\.\d{3}$", "", name)  # Blender が付ける ".001" を外す
+
+
+def prepare_materials() -> list[dict]:
+    """マテリアル名と同じ名前の画像を貼り、UV がなければ箱投影で作る。マテリアルの一覧を返す"""
+    texs = texture_files()
+    info: dict[str, dict] = {}
+    tiles: dict[str, float] = {}
+    for mat in bpy.data.materials:
+        if mat.name.startswith("_") or mat.users == 0:
+            continue
+        path = texs.get(_base(mat.name).lower())
+        if mat.node_tree is None:
+            _use_nodes(mat)
+        nt = mat.node_tree
+        bsdf = next((nd for nd in nt.nodes if nd.type == "BSDF_PRINCIPLED"), None)
+        if bsdf is None:
+            bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+            outn = next((nd for nd in nt.nodes if nd.type == "OUTPUT_MATERIAL"), None) or nt.nodes.new("ShaderNodeOutputMaterial")
+            nt.links.new(bsdf.outputs[0], outn.inputs["Surface"])
+        base = bsdf.inputs["Base Color"]
+        gray = (0.8, 0.8, 0.8)
+        # 色を mat.diffuse_color（ビューポートの色）にだけ入れた場合も、書き出しに色が乗るようにする
+        if not base.is_linked and all(abs(a - b) < 1e-4 for a, b in zip(base.default_value[:3], gray)) \
+                and any(abs(a - b) > 1e-4 for a, b in zip(mat.diffuse_color[:3], gray)):
+            base.default_value = tuple(mat.diffuse_color)
+        texture = None
+        if base.is_linked:
+            texture = "（スクリプトで設定済み）"
+        elif path:
+            tex = nt.nodes.new("ShaderNodeTexImage")
+            tex.image = bpy.data.images.load(str(path), check_existing=True)
+            nt.links.new(tex.outputs["Color"], base)
+            texture = path.name
+        tile = float(mat.get("tile", SAMPLE_TILES.get(path.stem if path else "", 1.0)))
+        tiles[mat.name] = tile
+        info[mat.name] = {"name": mat.name, "texture": texture, "tile": tile,
+                          "color": [round(x, 3) for x in base.default_value[:3]]}
+
+    done = set()
+    for o in bpy.context.scene.objects:
+        if o.type != "MESH" or o.data.name in done:
+            continue
+        done.add(o.data.name)
+        if o.data.get("keep_uv") and o.data.uv_layers:
+            continue  # スクリプトで作った UV を使う
+        box_uv(o, [tiles.get(s.material.name, 1.0) if s.material else 1.0 for s in o.material_slots])
+    return list(info.values())
+
+
+def box_uv(o, slot_tiles: list[float]) -> None:
+    """面の向きに合わせて X / Y / Z のいずれかから投影した UV を、実寸（メートル ÷ tile）で作る"""
+    me = o.data
+    if not me.uv_layers:
+        me.uv_layers.new(name="UVMap")
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    uv = bm.loops.layers.uv.verify()
+    mw = o.matrix_world
+    nm = mw.to_3x3().inverted_safe().transposed()
+    for f in bm.faces:
+        nrm = (nm @ f.normal).normalized()
+        tile = slot_tiles[f.material_index] if f.material_index < len(slot_tiles) else 1.0
+        tile = tile if tile > 0 else 1.0
+        ax = max(range(3), key=lambda i: abs(nrm[i]))
+        for lp in f.loops:
+            p = mw @ lp.vert.co
+            if ax == 0:
+                uu, vv = (p.y if nrm.x > 0 else -p.y), p.z
+            elif ax == 1:
+                uu, vv = (-p.x if nrm.y > 0 else p.x), p.z
+            else:
+                uu, vv = p.x, (p.y if nrm.z > 0 else -p.y)
+            lp[uv].uv = (uu / tile, vv / tile)
+    bm.to_mesh(me)
+    bm.free()
 
 
 # ---------------------------------------------------------------- 画像（AI が形を目で確かめる用）
@@ -254,8 +421,9 @@ def _use_nodes(idblock) -> None:
             idblock.use_nodes = True
 
 
-def render_views(views: list[str], size: int) -> bytes:
-    """Cycles（CPU）で粘土色＋ワイヤーの絵を描き、PNG のバイト列を返す。複数の視点は横に並べる"""
+def render_views(views: list[str], size: int, look: str = "clay", wire: bool = True) -> bytes:
+    """Cycles（CPU）で絵を描き、PNG のバイト列を返す。複数の視点は横に並べる。
+    look="clay" は粘土色、"material" はマテリアルとテクスチャのまま。wire でポリゴンの辺を重ねる"""
     import numpy as np
 
     sc = bpy.context.scene
@@ -283,12 +451,16 @@ def render_views(views: list[str], size: int) -> bytes:
 
     clay, edge = material("_clay", (0.62, 0.64, 0.68)), material("_edge", (0.03, 0.035, 0.045), 0.9)
     old_mats = {}
-    for o in meshes:  # 本体は粘土色に、辺はワイヤーフレームの複製で描く
-        old_mats[o.name] = [s.material for s in o.material_slots]
-        if not o.material_slots:
-            o.data.materials.append(None)
-        o.material_slots[0].link = "OBJECT"
-        o.material_slots[0].material = clay
+    for o in meshes:  # 本体は粘土色に（look="clay" のとき）、辺はワイヤーフレームの複製で描く
+        if look == "clay":
+            old_mats[o.name] = len(o.material_slots)
+            if not o.material_slots:
+                o.data.materials.append(None)
+            for slot in o.material_slots:
+                slot.link = "OBJECT"
+                slot.material = clay
+        if not wire:
+            continue
         wm = bpy.data.meshes.new_from_object(o.evaluated_get(dg))
         wo = bpy.data.objects.new("_wire", wm)
         wo.matrix_world = o.matrix_world
@@ -343,9 +515,10 @@ def render_views(views: list[str], size: int) -> bytes:
         sc.world, sc.camera, sc.render.engine, sc.render.resolution_x, sc.render.resolution_y, sc.render.filepath = old
         for o in meshes:
             if o.name in old_mats:
-                mats = old_mats[o.name]
-                o.material_slots[0].link = "DATA"
-                if not mats:
+                for slot in o.material_slots:
+                    slot.material = None
+                    slot.link = "DATA"
+                if not old_mats[o.name]:
                     o.data.materials.clear()
         for t in temp:
             coll = {bpy.types.Object: bpy.data.objects, bpy.types.Mesh: bpy.data.meshes, bpy.types.Material: bpy.data.materials,
@@ -423,9 +596,11 @@ def ensure_scene(run: dict) -> None:
         return
     reset_scene()
     ok, _ = run_code((RUNS_DIR / f"{run['id']:04d}" / "script.py").read_text(encoding="utf-8"))
-    STATE["scene_run"] = run["id"] if ok else None
     if not ok:
+        STATE["scene_run"] = None
         raise RuntimeError(f"実行 {run['id']} を作り直せませんでした")
+    prepare_materials()
+    STATE["scene_run"] = run["id"]
 
 
 def execute(code: str, title: str) -> dict:
@@ -437,12 +612,16 @@ def execute(code: str, title: str) -> dict:
         ok, out = run_code(code)
         STATE["scene_run"] = None
         run = {"id": run_id, "title": title or first_comment(code) or f"実行 {run_id}", "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-               "ok": ok, "output": out[-6000:], "stats": None, "objects": [], "problems": [], "files": []}
+               "ok": ok, "output": out[-6000:], "stats": None, "objects": [], "problems": [], "files": [], "materials": []}
         if ok:
             stats, per, wire = inspect_scene()
             (folder / "wire.json").write_text(json.dumps([round(x, 5) for x in wire]), encoding="utf-8")
-            errs = export_all(folder)
-            run.update(stats=stats, objects=per, problems=problems_of(stats, per) + errs,
+            try:
+                materials, errs = prepare_materials(), []
+            except Exception as e:  # テクスチャで失敗しても形は書き出す
+                materials, errs = [], [f"マテリアル・テクスチャの準備に失敗: {e}"]
+            errs += export_all(folder)
+            run.update(stats=stats, objects=per, problems=problems_of(stats, per) + errs, materials=materials,
                        files=[f for f in FORMATS if (folder / f"model.{f}").exists()])
             STATE["scene_run"] = run_id
         run["seconds"] = round(time.time() - t0, 2)
@@ -474,6 +653,12 @@ def report(run: dict) -> str:
         lines.append(f"- {o['name']}: 面 {o['faces']:,}（四角 {o['quads']:,} / 三角 {o['tris']:,}）" + (f" ⚠ {'、'.join(extra)}" if extra else ""))
     if len(run["objects"]) > 40:
         lines.append(f"- ほか {len(run['objects']) - 40} 個")
+    mats = run.get("materials") or []
+    if mats:
+        lines += ["", "マテリアル（UV は面の向きに合わせた箱投影で自動作成。mesh[\"keep_uv\"] = True なら自分の UV を使う）:"]
+        for m in mats:
+            tex = f"テクスチャ {m['texture']}（1枚 = {m['tile']:g}m）" if m["texture"] else f"色のみ {tuple(m['color'])}"
+            lines.append(f"- {m['name']}: {tex}")
     if run["output"].strip():
         lines += ["", "print の出力:", run["output"].strip()[-1500:]]
     if run["problems"]:
@@ -495,7 +680,7 @@ GUIDE = """Blender（GUI なし）でメッシュを作るツールです。手�
 進め方:
 1. run_script にスクリプト全体を渡して実行する（毎回まっさらな空のシーンから実行される）
 2. 返ってくるトポロジーの検査結果を読み、問題があれば形を保ったまま直して、スクリプト全体をもう一度実行する
-3. render で絵を見て、頼まれた形になっているかを確かめる。違えば直す
+3. render で絵を見て、頼まれた形になっているかを確かめる。違えば直す（テクスチャは look="material" で見る）
 4. 問題がなくなったら、ユーザーに結果を伝える。保存先を頼まれたら export を使う
 
 実行環境:
@@ -503,8 +688,17 @@ GUIDE = """Blender（GUI なし）でメッシュを作るツールです。手�
 - 単位はメートルで実寸。Z が上。接地するものは原点を底面の中心に置く
 - メッシュは bmesh か bpy.data で直接組み立てる。bpy.ops は 3D ビューがないと動かないものがあるので、
   プリミティブ追加・モディファイア・オブジェクトモードの操作程度にとどめる
-- オブジェクトには分かりやすい英語の名前を付ける。ライト・カメラ・マテリアルは不要
+- オブジェクトには分かりやすい英語の名前を付ける。ライト・カメラは不要
 - ファイルの読み書き、ネットワーク、レンダリングはしない（書き出しはサーバーが自動で行う）
+
+マテリアルとテクスチャ:
+- 部品や面ごとに、名前付きのマテリアルを作って割り当てる（obj.data.materials.append(mat) と、面の material_index）
+- list_textures にある画像と同じ名前のマテリアル（例: "Brick", "Concrete", "Wood"）には、その画像が自動で貼られる
+- 色だけでよい部分は、Principled BSDF の Base Color を設定する（ガラスなら Alpha や Transmission も使ってよい）
+- UV は作らなくてよい。サーバーが面の向きに合わせた箱投影で、実寸（メートル）基準の UV を作る。
+  1枚の画像が何メートル分かは mat["tile"] = 1.5 のように指定する（サンプルは list_textures に目安がある）
+- 自分で UV を作った場合は mesh["keep_uv"] = True を付ける（そのメッシュは自動で作り直さない）
+- 貼り具合は render(look="material") で確かめる
 
 トポロジーの品質（最重要）:
 - 四角ポリゴン主体にする。Nゴンは作らない。三角形は避けられない箇所（極など）だけ（全体の 10% 未満）
@@ -528,8 +722,11 @@ async def run_script(code: str, title: str = "") -> str:
 
 
 @mcp.tool(structured_output=False)
-async def render(views: list[str] | None = None, size: int = 384, run: int | None = None) -> list:
+async def render(views: list[str] | None = None, size: int = 384, run: int | None = None,
+                 look: str = "clay", wire: bool = True) -> list:
     """結果を絵にして見る（粘土色の面に、黒い線でポリゴンの辺を描いたもの）。
+    look: "clay"（粘土色。形とトポロジーを見る）か "material"（マテリアルとテクスチャのまま）
+    wire: ポリゴンの辺を重ねるか
     views: "persp"（斜め前）, "front"（正面 -Y 側から）, "side"（右 +X 側から）, "top"（真上）から選ぶ。
            省略時は ["persp", "front", "side"]。複数なら横に並べる
     size: 1視点あたりの大きさ（128〜768 ピクセル）
@@ -543,8 +740,21 @@ async def render(views: list[str] | None = None, size: int = 384, run: int | Non
         if not target or not target["ok"]:
             return ["描ける実行がありません。先に run_script で形を作ってください"]
         ensure_scene(target)
-        png = render_views(views[:4], max(128, min(int(size), 768)))
+        png = render_views(views[:4], max(128, min(int(size), 768)), "material" if look == "material" else "clay", bool(wire))
     return [f"実行 {target['id']}「{target['title']}」: 左から {', '.join(views[:4])}", Image(data=png, format="png")]
+
+
+@mcp.tool(structured_output=False)
+async def list_textures() -> str:
+    """貼れるテクスチャの一覧。この名前のマテリアルを作ると、その画像が貼られる"""
+    texs = texture_files()
+    if not texs:
+        return f"テクスチャがありません（{TEX_DIR} に画像を置くと使えます）"
+    rows = []
+    for f in texs.values():
+        hint = f"（1枚 = {SAMPLE_TILES[f.stem]:g}m の目安）" if f.stem in SAMPLE_TILES else ""
+        rows.append(f"- {f.stem}: {f.name}{hint}")
+    return f"マテリアル名に使える名前（大文字小文字は区別しない。置き場所: {TEX_DIR}）:\n" + "\n".join(rows)
 
 
 @mcp.tool(structured_output=False)
@@ -585,18 +795,31 @@ async def export(directory: str, name: str = "model", formats: list[str] | None 
     dest = Path(directory).expanduser()
     dest.mkdir(parents=True, exist_ok=True)
     done = []
+    folder = RUNS_DIR / f"{r['id']:04d}"
     for f in formats:
-        src = RUNS_DIR / f"{r['id']:04d}" / f"model.{f}"
-        if src.exists():
+        src = folder / f"model.{f}"
+        if not src.exists():
+            continue
+        if f == "obj":  # OBJ は MTL と画像も一緒に置く
+            text = src.read_text(encoding="utf-8").replace("mtllib model.mtl", f"mtllib {safe}.mtl")
+            (dest / f"{safe}.obj").write_text(text, encoding="utf-8")
+            if (folder / "model.mtl").exists():
+                shutil.copyfile(folder / "model.mtl", dest / f"{safe}.mtl")
+                done.append(str(dest / f"{safe}.mtl"))
+            for img in folder.iterdir():
+                if img.suffix.lower() in TEX_EXT:
+                    shutil.copyfile(img, dest / img.name)
+        else:
             shutil.copyfile(src, dest / f"{safe}.{f}")
-            done.append(str(dest / f"{safe}.{f}"))
+        done.append(str(dest / f"{safe}.{f}"))
     return "保存しました:\n" + "\n".join(done) if done else "該当するファイルがありません"
 
 
 # ================================================================ ビューアー（ブラウザ）
 
 def run_public(r: dict) -> dict:
-    return {k: r[k] for k in ("id", "title", "time", "ok", "stats", "problems", "files", "seconds")}
+    return {**{k: r[k] for k in ("id", "title", "time", "ok", "stats", "problems", "files", "seconds")},
+            "materials": r.get("materials", [])}
 
 
 async def page_index(_: Request):
@@ -619,19 +842,28 @@ async def api_run(req: Request):
 
 async def api_file(req: Request):
     run_id, name = int(req.path_params["run_id"]), req.path_params["name"]
-    if name not in ("wire.json", *(f"model.{f}" for f in FORMATS)):
+    if name not in ("wire.json", "model_obj.zip", *(f"model.{f}" for f in FORMATS)):
         return Response(status_code=404)
     f = RUNS_DIR / f"{run_id:04d}" / name
     if not f.exists():
         return Response(status_code=404)
-    media = {"glb": "model/gltf-binary", "fbx": "application/octet-stream", "obj": "text/plain", "json": "application/json"}
-    download = name.endswith((".fbx", ".obj"))
+    media = {"glb": "model/gltf-binary", "fbx": "application/octet-stream", "obj": "text/plain", "json": "application/json",
+             "zip": "application/zip"}
+    download = name.endswith((".fbx", ".obj", ".zip"))
     return FileResponse(f, media_type=media[name.rsplit(".", 1)[1]], filename=f"run{run_id:04d}_{name}" if download else None,
                         headers={"Cache-Control": "no-store"})
 
 
+async def api_texture(req: Request):
+    f = texture_files().get(Path(req.path_params["name"]).stem.lower())
+    if not f or f.name != req.path_params["name"]:
+        return Response(status_code=404)
+    return FileResponse(f)
+
+
 VIEW_ROUTES = [
     ("/", page_index),
+    ("/textures/{name}", api_texture),
     ("/api/runs", api_runs),
     ("/api/runs/{run_id:int}", api_run),
     ("/api/runs/{run_id:int}/{name}", api_file),
@@ -679,6 +911,10 @@ def start_viewer_thread(port: int) -> None:
 
 
 def main() -> None:
+    try:
+        make_sample_textures()
+    except Exception as e:
+        log(f"サンプルのテクスチャを作れませんでした: {e}")
     reset_scene()
     if ARGS.stdio:
         # ポートが使われていたら、同じ output を見ている bpy モデラーのビューアーに相乗りする。
