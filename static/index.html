@@ -325,6 +325,9 @@ async function poll() {
     const res = await fetch('/api/runs', { cache: 'no-store' });
     const data = await res.json();
     setConnected(true);
+    $('status').textContent = data.stdio
+      ? 'サーバーにつながっています（Claude Desktop などのアプリが起動したもの）'
+      : 'サーバーにつながっています';
     const url = `http://127.0.0.1:${data.port}/mcp`;
     $('cmdAdd').textContent = `claude mcp add --transport http bpy-modeler ${url}`;
     const before = runs.length ? runs[runs.length - 1].id : 0;

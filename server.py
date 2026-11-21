@@ -67,7 +67,10 @@ FORMATS = ("glb", "fbx", "obj")
 TRI_LIMIT = 0.10      # 三角ポリゴンの割合がこれを超えたら問題として返す
 FACE_LIMIT = 300_000  # 面がこれより多ければ問題として返す
 
-RUNS: list[dict] = []      # 実行の履歴（新しいものが後ろ）
+# 実行の履歴は output/runs/ のファイルが正本。同じフォルダを使う bpy モデラーが複数動いていても
+# （Claude Desktop が起動したものと start.bat で起動したもの、など）、どれのビューアーにも全部の結果が出る
+_RUN_CACHE: dict[str, dict] = {}
+VIEWER = {"url": None, "shared": False}  # 実際に見られるビューアーの URL
 STATE = {"scene_run": None}  # いまシーンに入っている実行の番号
 LOCK = threading.Lock()
 
@@ -377,20 +380,41 @@ def first_comment(code: str) -> str:
     return ""
 
 
-def load_runs() -> None:
-    for d in sorted(RUNS_DIR.iterdir(), key=lambda p: p.name):
-        meta = d / "meta.json"
-        if meta.exists():
-            with contextlib.suppress(Exception):
-                RUNS.append(json.loads(meta.read_text(encoding="utf-8")))
-    RUNS.sort(key=lambda r: r["id"])
+def runs() -> list[dict]:
+    """output/runs/ にある実行の一覧（番号順）。書き終わった meta.json だけを読む"""
+    out = []
+    for d in RUNS_DIR.iterdir():
+        if not (d.is_dir() and d.name.isdigit()):
+            continue
+        r = _RUN_CACHE.get(d.name)
+        if r is None:
+            try:
+                r = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+            except Exception:
+                continue  # まだ実行中か、壊れている
+            _RUN_CACHE[d.name] = r
+        out.append(r)
+    return sorted(out, key=lambda r: r["id"])
 
 
 def get_run(run_id: int | None, ok_only: bool = True) -> dict | None:
+    all_runs = runs()
     if run_id is None:
-        cands = [r for r in RUNS if r["ok"] or not ok_only]
+        cands = [r for r in all_runs if r["ok"] or not ok_only]
         return cands[-1] if cands else None
-    return next((r for r in RUNS if r["id"] == run_id), None)
+    return next((r for r in all_runs if r["id"] == run_id), None)
+
+
+def new_run_folder() -> tuple[int, Path]:
+    """次の番号のフォルダを作る。ほかの bpy モデラーと同時でも番号がぶつからないよう、作れた番号を使う"""
+    run_id = max((int(d.name) for d in RUNS_DIR.iterdir() if d.name.isdigit()), default=0) + 1
+    while True:
+        folder = RUNS_DIR / f"{run_id:04d}"
+        try:
+            folder.mkdir()
+            return run_id, folder
+        except FileExistsError:
+            run_id += 1
 
 
 def ensure_scene(run: dict) -> None:
@@ -406,9 +430,7 @@ def ensure_scene(run: dict) -> None:
 
 def execute(code: str, title: str) -> dict:
     with LOCK:
-        run_id = (RUNS[-1]["id"] + 1) if RUNS else 1
-        folder = RUNS_DIR / f"{run_id:04d}"
-        folder.mkdir(parents=True, exist_ok=True)
+        run_id, folder = new_run_folder()
         (folder / "script.py").write_text(code, encoding="utf-8")
         t0 = time.time()
         reset_scene()
@@ -425,7 +447,7 @@ def execute(code: str, title: str) -> dict:
             STATE["scene_run"] = run_id
         run["seconds"] = round(time.time() - t0, 2)
         (folder / "meta.json").write_text(json.dumps(run, ensure_ascii=False, indent=1), encoding="utf-8")
-        RUNS.append(run)
+        _RUN_CACHE[folder.name] = run
         log(f"[run {run_id}] {'OK' if ok else 'ERROR'} {run['title']}")
         return run
 
@@ -458,7 +480,10 @@ def report(run: dict) -> str:
         lines += ["", "検査で見つかった問題（形は保ったまま直してください）:"] + [f"- {p}" for p in run["problems"]]
     else:
         lines += ["", "トポロジー検査を通りました。"]
-    lines += ["", f"ビューアー: http://127.0.0.1:{ARGS.port} に表示しています。形を目で確かめるには render を使ってください。"]
+    if VIEWER["url"]:
+        lines += ["", f"ビューアー: {VIEWER['url']} に表示しています。形を目で確かめるには render を使ってください。"]
+    else:
+        lines += ["", "ビューアーは開けていません（ポートが空いていません）。形を目で確かめるには render を使ってください。"]
     return "\n".join(lines)
 
 
@@ -525,10 +550,11 @@ async def render(views: list[str] | None = None, size: int = 384, run: int | Non
 @mcp.tool(structured_output=False)
 async def list_runs(limit: int = 20) -> str:
     """これまでの実行の一覧（番号・説明・成否・面数・問題の数）"""
-    if not RUNS:
+    all_runs = runs()
+    if not all_runs:
         return "まだ実行がありません"
     rows = []
-    for r in RUNS[-limit:]:
+    for r in all_runs[-limit:]:
         s = r["stats"] or {}
         state = "OK" if r["ok"] and not r["problems"] else ("問題あり" if r["ok"] else "エラー")
         rows.append(f"{r['id']}: {r['title']} ／ {state} ／ 面 {s.get('faces', '-')} ／ {r['time']}")
@@ -578,7 +604,8 @@ async def page_index(_: Request):
 
 
 async def api_runs(_: Request):
-    return JSONResponse({"runs": [run_public(r) for r in RUNS], "port": ARGS.port, "stdio": ARGS.stdio},
+    return JSONResponse({"app": "bpy-modeler", "out": str(OUT), "runs": [run_public(r) for r in runs()],
+                         "port": ARGS.port, "stdio": ARGS.stdio},
                         headers={"Cache-Control": "no-store"})
 
 
@@ -611,24 +638,85 @@ VIEW_ROUTES = [
 ]
 
 
+def port_free(port: int) -> bool:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        if os.name != "nt":
+            # 直前まで使っていたポート（TIME_WAIT）を「使用中」と誤判定しないように。
+            # 待ち受け中のポートには、これを付けても bind できない（Windows では付けると重ねて bind できてしまうので付けない）
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def probe(port: int) -> dict | None:
+    """そのポートで動いているのが bpy モデラーなら、その情報を返す"""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/runs", timeout=1.5) as r:
+            data = json.load(r)
+        return data if data.get("app") == "bpy-modeler" else None
+    except Exception:
+        return None
+
+
+def same_output(info: dict | None) -> bool:
+    return bool(info) and Path(info.get("out", "")).resolve() == OUT
+
+
+def start_viewer_thread(port: int) -> None:
+    """ビューアーを別スレッドで動かす（ファイルを配るだけで Blender には触れない）"""
+    viewer = Starlette(routes=[Route(p, fn) for p, fn in VIEW_ROUTES])
+    server = uvicorn.Server(uvicorn.Config(viewer, host="127.0.0.1", port=port, log_level="warning"))
+    threading.Thread(target=server.run, daemon=True).start()
+    for _ in range(50):  # 待ち受けが始まるまで待つ（最大5秒）
+        if server.started:
+            break
+        time.sleep(0.1)
+
+
 def main() -> None:
-    load_runs()
     reset_scene()
-    url = f"http://127.0.0.1:{ARGS.port}"
     if ARGS.stdio:
-        # ビューアーは別スレッドで動かす（ファイルを配るだけで Blender には触れない）
-        viewer = Starlette(routes=[Route(p, fn) for p, fn in VIEW_ROUTES])
-        cfg = uvicorn.Config(viewer, host="127.0.0.1", port=ARGS.port, log_level="warning")
-        threading.Thread(target=uvicorn.Server(cfg).run, daemon=True).start()
-        log(f"bpy モデラー（stdio）: ビューアー {url}")
+        # ポートが使われていたら、同じ output を見ている bpy モデラーのビューアーに相乗りする。
+        # 別のものなら、空いている次のポートで開く
+        for port in range(ARGS.port, ARGS.port + 11):
+            if port_free(port):
+                start_viewer_thread(port)
+                VIEWER.update(url=f"http://127.0.0.1:{port}", shared=False)
+                break
+            if same_output(probe(port)):
+                VIEWER.update(url=f"http://127.0.0.1:{port}", shared=True)
+                break
+        if VIEWER["url"]:
+            how = "（すでに動いている bpy モデラーのビューアーに表示）" if VIEWER["shared"] else ""
+            log(f"bpy モデラー（stdio）: ビューアー {VIEWER['url']}{how}")
+        else:
+            log(f"bpy モデラー（stdio）: ポート {ARGS.port}〜{ARGS.port + 10} が空いていないので、ビューアーは開きません")
         mcp.run("stdio")  # Blender はメインスレッドで動く
-    else:
-        for p, fn in VIEW_ROUTES:
-            mcp.custom_route(p, ["GET"])(fn)
-        app = mcp.streamable_http_app(host="127.0.0.1")
-        log(f"bpy モデラー: ビューアー {url} ／ AI の接続先 {url}/mcp")
-        # 生成されたコードを実行するサーバーなので、自分の PC からだけ受け付ける
-        uvicorn.run(app, host="127.0.0.1", port=ARGS.port, log_level="warning")
+        return
+
+    url = f"http://127.0.0.1:{ARGS.port}"
+    if not port_free(ARGS.port):
+        info = probe(ARGS.port)
+        if same_output(info):
+            log(f"bpy モデラーはすでに動いています（{'Claude Desktop などが起動したもの' if info.get('stdio') else '別の画面で起動したもの'}）。")
+            log(f"ビューアーは {url} で見られます。この画面は閉じて構いません。")
+            if info.get("stdio"):
+                log("Claude Code からも使いたい場合は、Claude Desktop を終了してから起動し直してください。")
+        else:
+            log(f"ポート {ARGS.port} はほかのプログラムが使っています。--port 8001 のように別の番号で起動してください。")
+        sys.exit(1)
+    for p, fn in VIEW_ROUTES:
+        mcp.custom_route(p, ["GET"])(fn)
+    app = mcp.streamable_http_app(host="127.0.0.1")
+    VIEWER.update(url=url)
+    log(f"bpy モデラー: ビューアー {url} ／ AI の接続先 {url}/mcp")
+    # 生成されたコードを実行するサーバーなので、自分の PC からだけ受け付ける
+    uvicorn.run(app, host="127.0.0.1", port=ARGS.port, log_level="warning")
 
 
 if __name__ == "__main__":
