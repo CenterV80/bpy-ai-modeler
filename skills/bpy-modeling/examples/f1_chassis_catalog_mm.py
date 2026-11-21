@@ -3,7 +3,8 @@
 #           ブレーキディスク 前 328×32 / 後ろ 280×32mm、V6 90°・ボア 80・ストローク 53mm（1.6L）、前進 8 段、
 #           エネルギーストアはサバイバルセルの中（ドライバーの後ろ・燃料タンクの下）
 # 推定値  : 部品の位置（f1.LAYOUT）と、上に書いた以外の寸法（公表されていない）
-# 図鑑    : ビューアーの「図鑑を開く」で、qm.catalog で登録した項目ごとに等角図・三面図・部品表を描く
+# 確認できた事実（細部）: 1 気筒 4 バルブ・DOHC・空気ばね、直噴（1 気筒 1 本・最大 500bar）
+# 図鑑    : ビューアーの「図鑑を開く」で、qm.catalog で登録した項目ごとに等角図・三面図・部品表を描く（36 項目）
 qm.units("mm")
 MM = qm.MM
 L = f1.LAYOUT
@@ -142,6 +143,7 @@ f1.pipe("HVCableK", [P(-168, 2255, 123), P(-250, 2440, 130), P(-320, 2600, 190),
 f1.pipe("HVCableCE", [P(168, 2255, 123), P(110, 2300, 150), P(66, 2330, 153)], r=0.011, kind="hv", mats=mats)
 
 # =========================================================== 前の足まわり（左右）
+CORNER = {}
 D, TWF = f1.SPEC["front_tyre"]
 for s, tg in ((-1, "FL"), (1, "FR")):
     C = Vector((s * (f1.SPEC["width"] - TWF) / 2, 0.0, D / 2))
@@ -158,6 +160,7 @@ for s, tg in ((-1, "FL"), (1, "FR")):
     upper, lower, steer = Vector((s * 0.70, 0.0, C.z + 0.165)), Vector((s * 0.72, 0.0, C.z - 0.165)), Vector((s * 0.70, -0.11, C.z + 0.01))
     f1.upright(f"Upright_{tg}", U, upper, lower, steer, axis=OUT, mats=mats)
     cal_in = DC - OUT * (f1.BRAKE["front"][1] / 2 + 0.018) + cal_dir * 0.14
+    CORNER[tg] = {"cal": cal_in, "lower": lower, "upper": upper}
     qm.sweep(f"CaliperBracket_{tg}", [U + cal_dir * 0.06, cal_in], [(-0.010, -0.014), (0.010, -0.014), (0.010, 0.014), (-0.010, 0.014)],
              up=OUT, material=titan)
     f1.wishbone(f"LowerArm_{tg}", (s * 0.17, -0.20, 0.17), (s * 0.17, 0.22, 0.17), lower, mats=mats)
@@ -197,6 +200,7 @@ for side, tag in ((-1, "L"), (1, "R")):
     upper, lower, toe = P(s * 690, WB, WZ + 165), P(s * 700, WB, WZ - 160), P(s * 690, WB + 110, WZ + 5)
     f1.upright(f"Upright_R{tag}", U, upper, lower, toe, axis=OUT, mats=mats)
     cal_in = DC - OUT * ((32 / 2 + 18) * MM) + cal_dir * (115 * MM)
+    CORNER["R" + tag] = {"cal": cal_in, "lower": lower, "upper": upper}
     qm.sweep(f"CaliperBracket_R{tag}", [U + cal_dir * (60 * MM), cal_in],
              [(-10 * MM, -14 * MM), (10 * MM, -14 * MM), (10 * MM, 14 * MM), (-10 * MM, 14 * MM)], up=OUT, material=titan)
     f1.driveshaft(f"Driveshaft_R{tag}", P(s * 150, WB, WZ), U + OUT * (25 * MM), mats=mats)
@@ -260,6 +264,100 @@ for side in (-1, 1):
     qm.orient(qm.ball_bearing(f"Brg_Diff{'L' if side < 0 else 'R'}", 60 * MM, 100 * MM, 18 * MM, balls=12, material=steel),
               origin=P(side * 95, WB, AXLE_Z), x_axis=(0, 1, 0), z_axis=(1, 0, 0))
 
+
+# =========================================================== 細かい部品
+# ---- エンジンの中：動弁系（1 気筒 4 バルブ・DOHC・空気ばね）、点火プラグ、直噴インジェクター（1 気筒 1 本）と燃料レール
+f1.v6_valvetrain("Valve", mats=mats)
+f1.v6_ignition("Plug", mats=mats)
+
+# ---- ホイールテザー（A アームの中を通す。本数は規定書で確かめられなかったので、上下のアームに 1 本ずつ）
+for s, tg in ((-1, "FL"), (1, "FR")):
+    f1.tether(f"Tether_{tg}U", (s * 0.20, -0.18, 0.43), CORNER[tg]["upper"], mats=mats)
+    f1.tether(f"Tether_{tg}L", (s * 0.17, -0.20, 0.17), CORNER[tg]["lower"], mats=mats)
+for s, tg in ((-1, "RL"), (1, "RR")):
+    f1.tether(f"Tether_{tg}U", P(s * 150, 3240, 440), CORNER[tg]["upper"], mats=mats)
+    f1.tether(f"Tether_{tg}L", P(s * 150, 3230, 140), CORNER[tg]["lower"], mats=mats)
+
+# ---- ブレーキの配管（前の系統はマスターシリンダー 1 から前の左右へ、後ろの系統はマスターシリンダー 2 からブレーキバイワイヤの弁を通って後ろへ）
+for s, tg in ((-1, "FL"), (1, "FR")):
+    lo = CORNER[tg]["lower"]
+    f1.pipe(f"BrakeLine_{tg}", [P(-115, 440, 220), P(-115, 380, 150), P(s * 60, 100, 110), P(s * 160, -150, 170),
+                                lo + Vector((-s * 0.06, -0.02, 0.04)), CORNER[tg]["cal"]], r=0.004, kind="brake", mats=mats)
+f1.small_box("BBW", (-0.25, 2.37, 0.073), (0.08, 0.06, 0.05), color=(0.20, 0.22, 0.26), connectors=1, mats=mats)
+f1.pipe("BrakeLine_Rear", [P(-45, 440, 220), P(-45, 380, 150), P(-200, 800, 90), P(-250, 2300, 90), P(-250, 2380, 100)], r=0.004, kind="brake", mats=mats)
+for s, tg in ((-1, "RL"), (1, "RR")):
+    lo = CORNER[tg]["lower"]
+    f1.pipe(f"BrakeLine_{tg}", [P(-250, 2385, 100), P(s * 200, 2460, 100), P(s * 200, 3150, 100), P(s * 350, 3350, 170),
+                                lo + Vector((-s * 0.06, 0.02, 0.04)), CORNER[tg]["cal"]], r=0.004, kind="brake", mats=mats)
+
+# ---- 燃料を入れ・抜く口（左の横。レース中の給油はしない）
+hw2100 = f1.tub_section(2100)[0] / 2
+f1.coupling("FuelCoupling", P(-(hw2100 + 2), 2100, 480), axis=(-1, 0, 0), mats=mats)
+f1.pipe("FuelFillLine", [P(-(hw2100 - 4), 2100, 480), P(-(hw2100 - 20), 2100, 480), P(-300, 2100, 470)], r=0.012, kind="fuel", mats=mats)
+
+# ---- 消火器の配管とノズル（コクピットの足もとと、エンジンの前へ）
+EZ = 0.065 + 0.008 + 0.05
+f1.pipe("ExtLine_Cockpit", [P(0, 1320, EZ / MM), P(40, 1345, 100), P(150, 1200, 90), P(150, 700, 100), P(150, 660, 108)], r=0.004, kind="extinguisher", mats=mats)
+f1.nozzle("ExtNozzle_Cockpit", P(150, 660, 108), (0, -1, 0.3), mats=mats)
+f1.pipe("ExtLine_Engine", [P(0, 1320, EZ / MM), P(-40, 1345, 100), P(-230, 1400, 90), P(-300, 1900, 90), P(-300, 2300, 90),
+                           P(-250, 2440, 200), P(-210, 2465, 245)], r=0.004, kind="extinguisher", mats=mats)
+f1.nozzle("ExtNozzle_Engine", P(-210, 2465, 245), (0.3, 1, 0.3), mats=mats)
+
+# ---- ドリンクの装置、無線、事故データ記録装置
+f1.drink_system("Drink", bag=(0.27, 1.50, 0.073), mats=mats)
+f1.small_box("Radio", (0.25, 1.15, 0.073), (0.08, 0.10, 0.05), color=(0.18, 0.18, 0.20), connectors=2, mats=mats)
+f1.small_box("ADR", (-0.25, 1.15, 0.073), (0.06, 0.08, 0.04), color=(0.75, 0.55, 0.05), connectors=1, mats=mats)
+
+# ---- 前のアンチロールバーとヒーブダンパー（ロッカーの間。配置は推定）
+deck90 = f1.tub_section(90)[1] * MM
+f1.anti_roll_bar("FrontARB", (0, 0.09, deck90 + 0.010), 0.10, arm=0.07, mats=mats)
+for s, tg in ((-1, "L"), (1, "R")):
+    qm.box(f"FrontARB_Mount{tg}", (0.03, 0.03, 0.02), origin="bottom", location=(s * 0.06, 0.09, deck90 - 0.004), material=titan)
+    qm.tube(f"ARBLink_F{tg}", [(s * 0.088, 0.09, deck90 + 0.010 + 0.068), (s * 0.11, 0.055, 0.585)], radius=0.005, seg=8, material=titan)
+    qm.tube(f"HeaveLink_F{tg}", [(s * 0.07, 0.10, 0.63), (s * 0.085, 0.05, 0.618)], radius=0.005, seg=8, material=titan)
+f1.damper("FrontHeave", (-0.07, 0.10, 0.63), (0.07, 0.10, 0.63), body_r=0.018, mats=mats)
+f1.damper("RearHeave", P(-60, 3360, 600), P(60, 3360, 600), body_r=0.018, mats=mats)
+for s, tg in ((-1, "L"), (1, "R")):
+    qm.tube(f"HeaveLink_R{tg}", [P(s * 60, 3360, 600), P(s * 45, 3330, 585)], radius=0.005, seg=8, material=titan)
+
+# ---- ウェイストゲートと、テールパイプへの管
+f1.wastegate("Wastegate", (-0.170, 3.060, 0.592), mats=mats)
+qm.tube("Wastegate_Pipe", [P(-150, 3070, 600), P(-80, 3250, 625), P(0, 3420, 612)], radius=0.018, seg=12, material=inconel)
+
+# ---- 冷却水のヘッダータンク（後ろの上ぶたの上）と、ギアボックスのオイルクーラー
+deck2380 = f1.tub_section(2380)[1] * MM
+f1.header_tank("HeaderTank", (-0.20, 2.38, deck2380), mats=mats)
+f1.pipe("HeaderTankHose", [(-0.25, 2.40, deck2380 + 0.03), (-0.30, 2.43, deck2380 + 0.0), (-0.33, 2.45, 0.60)], r=0.008, kind="water", mats=mats)
+gbc = f1.radiator("GearboxOilCooler", 0.16, 0.12, 0.04, mats=mats)
+qm.orient(gbc, origin=P(-240, 3150, 260), x_axis=(1, 0, 0), z_axis=(0, 0, 1))
+qm.sweep("GearboxOilCooler_Bracket", [P(-138, 3150, 260), P(-222, 3150, 260)], [(-0.006, -0.012), (0.006, -0.012), (0.006, 0.012), (-0.006, 0.012)],
+         up=(0, 0, 1), material=titan)
+f1.pipe("GearboxOilLine1", [P(-240, 3247, 330), P(-200, 3262, 345), P(-120, 3262, 345)], r=0.006, kind="oil", mats=mats)
+f1.pipe("GearboxOilLine2", [P(-240, 3053, 190), P(-200, 3045, 185), P(-120, 3045, 235)], r=0.006, kind="oil", mats=mats)
+
+# ---- 油圧系（エンジンの前のポンプ → アキュムレーター → ギアボックスの横の制御弁 → シフト・クラッチ、パワーステアリング）
+f1.hydraulic_pump("HydPump", P(90, YF, 190), axis=(0, -1, 0), mats=mats)
+f1.accumulator("Accumulator", P(190, 2600, 160), P(190, 2780, 160), mats=mats)
+f1.valve_block("ValveBlock", (-0.19, 3.00, 0.34), mats=mats)
+f1.pipe("HydLine_Pump", [P(90, 2478, 190), P(150, 2490, 175), P(190, 2540, 160), P(190, 2592, 160)], r=0.005, kind="hydraulic", mats=mats)
+f1.pipe("HydLine_Supply", [P(190, 2775, 160), P(230, 2860, 120), P(230, 2960, 120), P(-190, 2960, 120), P(-190, 3000, 345)], r=0.005, kind="hydraulic", mats=mats)
+f1.pipe("HydLine_Shift", [P(-150, 3010, 390), P(-60, 2965, 470), P(40, 2965, 360)], r=0.004, kind="hydraulic", mats=mats)
+f1.pipe("HydLine_Clutch", [P(-190, 2960, 360), P(-120, 2930, 300), P(-55, 2925, 272)], r=0.004, kind="hydraulic", mats=mats)
+f1.pipe("PowerSteeringLine", [P(-200, 3000, 345), P(-320, 2950, 110), P(-330, 2440, 100), P(-320, 1600, 130), P(-280, 1000, 130),
+                              P(-150, 100, 170), P(-60, -110, 300)], r=0.005, kind="hydraulic", mats=mats)
+f1.small_box("PowerSteering_Valve", (0.04, -0.15, 0.255), (0.05, 0.04, 0.045), color=(0.55, 0.56, 0.58), connectors=1, mats=mats)
+
+# ---- 電装（ECU、配線の束）
+f1.small_box("ECU", (-0.42, 1.15, 0.17), (0.12, 0.16, 0.06), color=(0.12, 0.12, 0.14), connectors=3, mats=mats)
+hw1150 = f1.tub_section(1150)[0] / 2
+qm.box("ECU_Bracket", ((0.36 - hw1150 * MM) + 0.01, 0.03, 0.02), origin="bottom",
+       location=(-(hw1150 * MM + 0.36) / 2, 1.15, 0.19), material=titan)
+f1.pipe("Loom_Main", [P(-400, 1150, 220), P(-336, 1180, 300), P(-336, 1500, 400), P(-336, 2440, 400), P(-300, 2480, 470)], r=0.010, kind="loom", mats=mats)
+t_top = f1.V6["deck"] + f1.V6["head"] + f1.V6["cover"]           # カムカバーの上面（クランク軸からの距離）
+cov = [f1.v6_point(-1, t_top + 10, -45, y) for y in (2560, 2700, 2840)]
+f1.pipe("Loom_Engine", [P(-300, 2480, 470)] + [c * MM for c in cov], r=0.008, kind="loom", mats=mats)
+f1.pipe("Loom_Cockpit", [P(-400, 1150, 220), P(-300, 1080, 400), P(-150, 1060, 520), P(-20, 1050, 540)], r=0.008, kind="loom", mats=mats)
+
 # =========================================================== 検査
 qm.expect("*", floating=True)        # 車体とフロアがないので、全体は地面から浮いてよい（部品どうしのつながりは見る）
 qm.expect("Disc_FL", size=(32 * MM, 328 * MM, 328 * MM), tol=0.02)
@@ -293,10 +391,13 @@ qm.catalog("pedals", "ペダル", "床に軸のある 2 枚のペダル（左が
            "バランスバーを介して押す。", parts=["PedalBox", "PedalBrake", "PedalThrottle", "Master", "BalanceBar"],
            labels={"PedalBrake_Pad": "ブレーキペダル", "PedalThrottle_Pad": "アクセルペダル", "Master1_Body": "マスターシリンダー",
                    "BalanceBar": "バランスバー", "PedalThrottle_Sensor": "位置センサー", "PedalBox_Front": "取り付け板"}, group=G2)
-qm.catalog("extinguisher", "消火器", "脚の下の床に寝かせたボトル。ノズルへの配管は省略。寸法は推定。", parts=["Extinguisher"],
-           labels={"Extinguisher_Valve": "弁", "Extinguisher_Strap1": "固定バンド", "Extinguisher": "ボトル"}, group=G2)
+qm.catalog("extinguisher", "消火器", "脚の下の床に寝かせたボトルから、コクピットの足もとと、エンジンの前のノズルへ配管する。寸法は推定。",
+           parts=["Extinguisher", "ExtLine", "ExtNozzle"],
+           labels={"Extinguisher_Valve": "弁", "Extinguisher_Strap1": "固定バンド", "Extinguisher": "ボトル", "ExtNozzle_Cockpit": "コクピットのノズル",
+                   "ExtNozzle_Engine": "エンジンのノズル"}, group=G2)
 qm.catalog("fuel", "燃料タンク", "ドライバーの背中とエンジンの間にある、ゴム袋の燃料セル。底の集油槽のポンプから、エンジンの高圧ポンプへ送る。",
-           parts=["FuelCell", "FuelLine"], labels={"FuelCell": "燃料セル", "FuelCell_Hatch": "点検ふた", "FuelLine": "燃料の配管"}, group=G3)
+           parts=["FuelCell", "FuelLine", "FuelCoupling", "FuelFillLine"],
+           labels={"FuelCell": "燃料セル", "FuelCell_Hatch": "点検ふた", "FuelLine": "燃料の配管", "FuelCoupling": "燃料を入れ・抜く口"}, group=G3)
 qm.catalog("es", "エネルギーストアと制御電子機器", "リチウムイオン電池（ES）は、サバイバルセルの中、燃料タンクの下。"
            "制御電子機器（CE）と MGU-K へ高電圧の配線でつながる。寸法は推定。", parts=["ES", "CE", "HVCable"],
            labels={"ES": "エネルギーストア", "ES_CoolingPlate": "冷却板", "CE": "制御電子機器", "HVCableK": "MGU-K への配線"}, group=G3)
@@ -317,15 +418,15 @@ qm.catalog("exhaust", "排気", "左右 3 本ずつの管を集合部でまと�
            parts=["Exhaust_", "Tailpipe"], labels={"Exhaust_PrimaryL1": "マニホールド", "Exhaust_CollectorL": "集合部",
                                                    "Exhaust_ToTurboR": "タービンへの管", "Tailpipe": "テールパイプ"}, group=G4)
 qm.catalog("turbo", "ターボチャージャー", "排気でタービンを回し、同じ軸のコンプレッサーで吸気を圧縮する。2026 年は MGU-H がなくなった。",
-           parts=["Turbo"], labels={"Turbo_Compressor": "コンプレッサー", "Turbo_Turbine": "タービン", "Turbo_Bearing": "軸受ハウジング",
+           parts=["Turbo", "Wastegate"], labels={"Wastegate": "ウェイストゲート", "Turbo_Compressor": "コンプレッサー", "Turbo_Turbine": "タービン", "Turbo_Bearing": "軸受ハウジング",
                                      "Turbo_CompOutlet": "圧縮空気の出口", "Turbo_TurbineInletL": "排気の入口"}, group=G4)
 qm.catalog("mguk", "MGU-K", "減速で電気を回収し、加速で最大 350kW を足すモーター発電機。クランクの前のギアから、アイドラーを介して回る。"
            "位置・寸法は推定。", parts=["MGUK", "Crank_Gear"],
            labels={"MGUK": "本体", "MGUK_Gear": "駆動ギア", "MGUK_Idler": "アイドラー", "Crank_Gear": "クランクのギア", "MGUK_HVTerminal": "高電圧の端子"}, group=G4)
 qm.catalog("cooling", "冷却（ラジエーター・インタークーラー・オイルクーラー）", "サイドポッドの中の熱交換器。左右に冷却水のラジエーター、"
-           "右にターボの空気を冷やすインタークーラー、左にオイルクーラー。", parts=["Radiator", "Intercooler", "OilCooler", "WaterPipe", "ChargePipe", "OilLine", "CoolerBracket"],
+           "右にターボの空気を冷やすインタークーラー、左にオイルクーラー。", parts=["Radiator", "Intercooler", "OilCooler", "WaterPipe", "ChargePipe", "OilLine", "CoolerBracket", "HeaderTank"],
            labels={"RadiatorL": "ラジエーター", "Intercooler": "インタークーラー", "OilCooler": "オイルクーラー", "WaterPipeHotR": "冷却水（行き）",
-                   "WaterPipeColdR": "冷却水（帰り）", "ChargePipe1": "圧縮空気の管", "OilLineFeed": "オイルの管"}, group=G5)
+                   "WaterPipeColdR": "冷却水（帰り）", "ChargePipe1": "圧縮空気の管", "OilLineFeed": "オイルの管", "HeaderTank": "ヘッダータンク"}, group=G5)
 qm.catalog("oiltank", "オイルタンク", "ドライサンプのオイルをためるタンク。燃料タンクとエンジンの間。", parts=["OilTank"],
            labels={"OilTank": "タンク", "OilTank_Filler": "給油口", "OilTank_Breather": "ブリーザー"}, group=G5)
 qm.catalog("front_susp", "前のサスペンション", "上下の A アーム、プッシュロッド、ロッカー、ダンパー。ダンパーはサバイバルセルの上に寝かせる。",
@@ -337,17 +438,18 @@ qm.catalog("front_brake", "前のブレーキ・ハブ・ホイール（左）",
            labels={"Disc_FL": "ブレーキディスク", "Caliper_FL": "キャリパー", "Hub_FL": "ハブ", "Rim_FL": "ホイール", "Upright_FL": "アップライト"}, group=G6)
 qm.catalog("rear_susp", "後ろのサスペンション", "ギアボックスの横の取り付け台から出る A アームとトーリンク、プッシュロッドで動くロッカーとダンパー、アンチロールバー。",
            parts=["LowerArm_R", "UpperArm_R", "ToeLink_R", "Pushrod_R", "Rocker_R", "RockerMount_R", "Damper_R", "DamperMount_R", "Upright_R", "Mount_",
-                  "AntiRollBar", "ARBMount"],
+                  "AntiRollBar", "ARBMount", "RearHeave", "HeaveLink_R"],
            labels={"LowerArm_RL": "下の A アーム", "UpperArm_RL": "上の A アーム", "ToeLink_RL": "トーリンク", "Damper_RR": "ダンパー",
-                   "Rocker_RR": "ロッカー", "AntiRollBar": "アンチロールバー", "Upright_RR": "アップライト"}, group=G6)
+                   "Rocker_RR": "ロッカー", "AntiRollBar": "アンチロールバー", "RearHeave": "ヒーブダンパー", "Upright_RR": "アップライト"}, group=G6)
 qm.catalog("rear_brake", "後ろのブレーキ・ドライブシャフト（左）", "ディスク 280×32mm、6 ピストンキャリパー。ドライブシャフトの両端に等速ジョイント。",
            parts=["Disc_RL", "Caliper_RL", "CaliperBracket_RL", "Hub_RL", "Rim_RL", "Upright_RL", "Driveshaft_RL"],
            labels={"Disc_RL": "ブレーキディスク", "Caliper_RL": "キャリパー", "Driveshaft_RL_InnerCV": "等速ジョイント（内）",
                    "Driveshaft_RL_Shaft": "ドライブシャフト", "Rim_RL": "ホイール"}, group=G6)
 qm.catalog("tyres", "タイヤ", "前 705×280mm、後ろ 710×375mm（2026 年規定）。18 インチ。", parts=["Tyre_"],
            labels={"Tyre_FL": "前輪", "Tyre_RL": "後輪"}, group=G6)
-qm.catalog("gearbox", "ギアボックスのケースと後ろの衝撃吸収構造", "エンジンの後ろに付き、後ろのサスペンションの取り付け台を兼ねる。", parts=["Gearbox", "RearCrash"],
-           labels={"Gearbox_Flange": "ベルハウジングのフランジ", "Gearbox": "ケース", "RearCrash": "衝撃吸収構造"}, group=G7)
+qm.catalog("gearbox", "ギアボックスのケースと後ろの衝撃吸収構造", "エンジンの後ろに付き、後ろのサスペンションの取り付け台を兼ねる。左の横にギアボックスのオイルクーラー。",
+           parts=["Gearbox", "RearCrash"],
+           labels={"Gearbox_Flange": "ベルハウジングのフランジ", "Gearbox": "ケース", "RearCrash": "衝撃吸収構造", "GearboxOilCooler": "オイルクーラー"}, group=G7, view="front-left")
 qm.catalog("clutch", "クラッチ", "カーボンの多板クラッチ。直径およそ 100mm。", parts=["Clutch"],
            labels={"Clutch_Basket": "バスケット", "Clutch_Friction1": "摩擦板", "Clutch_PressurePlate": "押し付け板", "Clutch_Hub": "ハブ"}, group=G7)
 qm.catalog("gears", "前進 8 段のギア列", "入力軸と出力軸に 8 組の歯車。ドッグハブ 4 個で 1 組ずつ選ぶ。歯数とモジュールは推定。",
@@ -358,3 +460,32 @@ qm.catalog("shift", "シフトドラムとフォーク", "ドラムの溝がフ�
                                                            "Fork2": "セレクターフォーク", "DogHub3": "ドッグハブ"}, group=G7)
 qm.catalog("diff", "かさ歯車とデフ", "出力軸のピニオン（12 歯）とクラウン（36 歯）で 90° 曲げ、デフで左右へ分ける。", parts=["BevelPinion", "CrownWheel", "Diff", "Brg_Diff"],
            labels={"BevelPinion": "ピニオン", "CrownWheel": "クラウンギア", "Diff_Case": "デフケース", "Brg_DiffR": "軸受"}, group=G7)
+
+G8 = "細かい部品"
+qm.catalog("valvetrain", "動弁系（左バンク）", "1 気筒に吸気 2・排気 2 のバルブ。バンクごとに吸気と排気のカムシャフト（DOHC）。"
+           "バルブは金属のばねではなく空気ばねで閉じる。傾き・径・カムの形は推定。", parts=["Valve_L", "Cam_L"],
+           labels={"Valve_L1Ina": "吸気バルブ", "Valve_L1Exa": "排気バルブ", "Valve_L2Ina_AirSpring": "空気ばね", "Valve_L3Exb_Tappet": "タペット",
+                   "Cam_LIn": "吸気のカムシャフト", "Cam_LEx": "排気のカムシャフト", "Cam_LInGear": "カムのギア"}, group=G4)
+qm.catalog("ignition", "点火プラグとインジェクター", "点火プラグはシリンダーの真上。燃料は 1 気筒 1 本のインジェクターで、シリンダーへ直接噴く（最大 500bar）。"
+           "左右のバンクの燃料レールから配る。", parts=["Plug_", "Injector_", "FuelRail_", "Engine_Coil"],
+           labels={"Plug_L1": "点火プラグ", "Plug_L1Insulator": "がいし", "Injector_R2": "インジェクター", "FuelRail_R": "燃料レール",
+                   "Engine_CoilL3": "点火コイル"}, group=G4)
+qm.catalog("tethers", "ホイールテザー", "事故でタイヤが外れて飛ばないよう、車体とアップライトをつなぐ繊維のケーブル。サスペンションのアームの中を通す。"
+           "本数は規定書で確かめられなかったので、図では上下のアームに 1 本ずつ。", parts=["Tether_"],
+           labels={"Tether_FLU": "前・上", "Tether_FLL": "前・下", "Tether_RRU": "後ろ・上", "Tether_RRL": "後ろ・下"}, group=G6)
+qm.catalog("brake_lines", "ブレーキの配管", "前後 2 系統。前はマスターシリンダーから前の左右のキャリパーへ。"
+           "後ろはブレーキバイワイヤの弁を通して後ろの左右へ。", parts=["BrakeLine", "BBW", "Master", "PedalBrake"],
+           labels={"BrakeLine_FL": "前の配管", "BrakeLine_Rear": "後ろの系統", "BBW": "ブレーキバイワイヤの弁", "Master1": "マスターシリンダー",
+                   "BrakeLine_RR": "後ろの配管"}, group=G6)
+qm.catalog("arb_heave", "前のアンチロールバーとヒーブダンパー", "左右のロッカーをつなぐねじり棒（ロール）と、上下の動きだけを受ける 3 本目のダンパー（ヒーブ）。"
+           "配置は推定。", parts=["FrontARB", "FrontHeave", "ARBLink_F", "HeaveLink_F", "Rocker_F", "RockerMount_F"],
+           labels={"FrontARB": "アンチロールバー", "FrontHeave": "ヒーブダンパー", "ARBLink_FL": "リンク", "Rocker_FR": "ロッカー"}, group=G6)
+qm.catalog("drink", "ドリンクの装置・無線・記録装置", "シートの横の袋から、電動ポンプでヘルメットへ飲み物を送る。"
+           "無線の箱と、事故のときの加速度を残す記録装置（ADR）。寸法は推定。", parts=["Drink", "Radio", "ADR"],
+           labels={"Drink": "ドリンクの袋", "Drink_Pump": "ポンプ", "Drink_Tube": "ヘルメットへの管", "Radio": "無線", "ADR": "事故データ記録装置"}, group=G2)
+qm.catalog("hydraulics", "油圧系", "エンジンの前のポンプで油圧を作り、アキュムレーターにためる。ギアボックスの横の制御弁から、"
+           "シフト・クラッチと、ラックのパワーステアリングへ送る。配置は推定。", parts=["HydPump", "HydLine", "Accumulator", "ValveBlock", "PowerSteering"],
+           labels={"HydPump": "油圧ポンプ", "Accumulator": "アキュムレーター", "ValveBlock": "制御弁", "PowerSteeringLine": "パワーステアリングへ",
+                   "PowerSteering_Valve": "パワーステアリングの弁", "HydLine_Shift": "シフトへ"}, group=G7)
+qm.catalog("electronics", "電装（ECU と配線）", "車の制御をする ECU は左のサイドポッドの前。配線の束でエンジンの点火コイル、ステアリングホイールへ。",
+           parts=["ECU", "Loom"], labels={"ECU": "ECU", "Loom_Main": "配線の束", "Loom_Engine": "エンジンへ", "Loom_Cockpit": "コクピットへ"}, group=G3)

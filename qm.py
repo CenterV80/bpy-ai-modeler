@@ -649,7 +649,7 @@ def catalog(key: str, title: str, description: str = "", parts=None, labels=None
     """図鑑の項目を登録する（ビューアーの「図鑑」ページで 1 項目 = 1 枚の図になる）。
     key: 項目の識別名（英数字） / title: 見出し（日本語でよい） / description: 説明文 / group: 章（例 "足まわり"）
     parts: この項目に入るオブジェクトの名前、または名前の先頭（例 ["Gearbox", "Clutch_"]）
-    labels: 引き出し線を付ける部品 {"オブジェクト名の先頭": "表示する名前", ...}
+    labels: 引き出し線を付ける部品 {"オブジェクト名（または先頭）": "表示する名前", ...}。同じ名前のオブジェクトがあればそれだけを指す
     view: 等角図をどこから見るか。"front"（右前の上、既定）/ "rear"（右後ろの上）/ "front-left" / "rear-left"
     （ステアリングホイールのように、見せたい面が後ろ = +Y を向いている部品は "rear"）"""
     sc = bpy.context.scene

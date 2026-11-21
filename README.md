@@ -250,10 +250,14 @@ AI は `f1_help` ツールで使い方を読みます。
 | `f1.fuel_cell` / `f1.energy_store` / `f1.control_electronics` / `f1.oil_tank` | 燃料セル / エネルギーストア（電池） / 制御電子機器 / オイルタンク |
 | `f1.v6_engine` / `f1.v6_internals` | V6 90° エンジンの外観（クランクケース・ブロック・ヘッド・カムカバー・ポンプ類） / クランクシャフト・ピストン・コンロッド |
 | `f1.intake` / `f1.exhaust` / `f1.turbocharger` / `f1.mgu_k` | 吸気（トランペット・プレナム・スロットル） / 排気（マニホールド・集合部） / ターボ / MGU-K |
-| `f1.radiator` / `f1.pipe` | ラジエーター・インタークーラー・オイルクーラー / 配管（冷却水・オイル・燃料・吸気・高電圧の色分け） |
+| `f1.radiator` / `f1.pipe` | ラジエーター・インタークーラー・オイルクーラー / 配管（冷却水・オイル・燃料・吸気・高電圧・ブレーキ・油圧・配線の束の色分け） |
+| `f1.v6_valvetrain` / `f1.v6_ignition` | 動弁系（吸気 2・排気 2 のバルブ、空気ばね、タペット、カムシャフト） / 点火プラグ・直噴インジェクター・燃料レール |
+| `f1.tether` / `f1.coupling` / `f1.nozzle` / `f1.drink_system` | ホイールテザー / 燃料を入れ・抜く口 / 消火器のノズル / ドリンクの装置 |
+| `f1.header_tank` / `f1.wastegate` / `f1.small_box` | 冷却水のヘッダータンク / ウェイストゲート / ECU・無線・記録装置などの箱 |
+| `f1.hydraulic_pump` / `f1.accumulator` / `f1.valve_block` | 油圧ポンプ / アキュムレーター / 油圧の制御弁 |
 
 部品の位置は `f1.LAYOUT`（ミリ）、エンジンの寸法は `f1.V6` にまとめています。ボア 80mm・ストローク 53mm・バンク角 90° は確認できた値、
-ほかの位置と寸法は推定です。全部を組み立てて部品ごとの図鑑（28 項目）を描く例が `skills/bpy-modeling/examples/f1_chassis_catalog_mm.py` にあります。
+ほかの位置と寸法は推定です。全部を組み立てて部品ごとの図鑑（36 項目）を描く例が `skills/bpy-modeling/examples/f1_chassis_catalog_mm.py` にあります。
 
 歯車は `qm.gear`（平歯車）と `qm.bevel_gear`（かさ歯車）、軸受は `qm.ball_bearing`（内輪・外輪・玉）を使います。
 ギアボックスの中身を組んだ例が `skills/bpy-modeling/examples/f1_gearbox_internals_mm.py` にあります
