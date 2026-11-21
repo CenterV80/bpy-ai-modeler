@@ -164,6 +164,12 @@
     </section>
 
     <section>
+      <h2>図鑑</h2>
+      <div class="row"><a class="btn" id="catalogLink" aria-disabled="true" target="_blank" rel="noopener">図鑑を開く</a><span class="note" id="catalogNote"></span></div>
+      <p class="note">スクリプトで <code>qm.catalog(...)</code> を使って登録した部品ごとに、等角図・三面図（寸法つき）・部品表を 1 ページずつ描きます。印刷・PDF にもできます。</p>
+    </section>
+
+    <section>
       <details>
         <summary>スクリプト</summary>
         <pre id="code" class="empty">—</pre>
@@ -534,6 +540,10 @@ async function select(id) {
     if (ok) { a.href = `/api/runs/${r.id}/${file}`; a.download = `run${String(r.id).padStart(4, '0')}_${file}`; }
     else a.removeAttribute('href');
   });
+  const nCat = (r.catalog || []).length;
+  $('catalogLink').setAttribute('aria-disabled', String(!nCat));
+  if (nCat) $('catalogLink').href = `/catalog?run=${r.id}`; else $('catalogLink').removeAttribute('href');
+  $('catalogNote').textContent = nCat ? `${nCat} 項目` : '登録なし';
   const mats = r.materials || [];
   $('materials').innerHTML = mats.length ? mats.map(m => {
     const c = m.color.map(x => Math.round(Math.min(1, Math.max(0, x)) ** (1 / 2.2) * 255)).join(',');

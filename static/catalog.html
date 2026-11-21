@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>図鑑 — bpy モデラー</title>
+<style>
+  :root { --ink:#1b1d22; --sub:#5f6672; --line:#d9dde3; --paper:#ffffff; --bg:#eef0f3; --accent:#2f6fde; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.6 "Hiragino Sans","Noto Sans JP",system-ui,sans-serif; }
+  header.bar { position:sticky; top:0; z-index:5; display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    padding:10px 18px; background:#fff; border-bottom:1px solid var(--line); }
+  header.bar h1 { font-size:16px; margin:0 12px 0 0; }
+  header.bar .sub { color:var(--sub); font-size:12px; }
+  button, select { font:inherit; font-size:13px; padding:5px 12px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer; }
+  button.on { border-color:var(--accent); color:var(--accent); }
+  #progress { color:var(--sub); font-size:12px; }
+  main { max-width:1280px; margin:0 auto; padding:18px; }
+  nav.toc { background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:14px 18px; margin-bottom:18px; }
+  nav.toc h2 { font-size:14px; margin:0 0 6px; }
+  nav.toc ol { margin:0; padding-left:20px; columns:2; }
+  nav.toc a { color:var(--accent); text-decoration:none; }
+  .plate { background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:18px 22px; margin-bottom:22px; }
+  .plate .head { display:flex; align-items:baseline; gap:12px; border-bottom:2px solid var(--ink); padding-bottom:6px; margin-bottom:10px; }
+  .plate .no { font:700 13px/1 ui-monospace,Menlo,monospace; color:#fff; background:var(--ink); padding:4px 7px; border-radius:4px; }
+  .plate h2 { font-size:20px; margin:0; }
+  .plate .group { color:var(--sub); font-size:12px; margin-left:auto; }
+  .plate .desc { margin:0 0 10px; color:#33373f; }
+  .figs { display:grid; grid-template-columns:1.55fr 1fr; gap:12px; }
+  .figs .ortho { display:grid; grid-template-rows:repeat(3, auto); gap:8px; }
+  figure { margin:0; border:1px solid var(--line); border-radius:6px; overflow:hidden; background:#fff; }
+  figure img { display:block; width:100%; height:auto; }
+  .figs > figure { display:flex; flex-direction:column; justify-content:center; }
+  .figs > figure figcaption { margin-top:auto; }
+  .figs > figure img { margin-top:auto; }
+  figcaption { font-size:11px; color:var(--sub); padding:3px 8px; border-top:1px solid var(--line); }
+  table { width:100%; border-collapse:collapse; margin-top:12px; font-size:12.5px; }
+  th, td { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; }
+  th { background:#f6f7f9; font-weight:600; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; font-family:ui-monospace,Menlo,monospace; }
+  .empty { color:var(--sub); }
+  @media print {
+    @page { size:A4 landscape; margin:10mm; }
+    body { background:#fff; }
+    header.bar, nav.toc { display:none; }
+    main { padding:0; max-width:none; }
+    .plate { border:none; border-radius:0; padding:0; margin:0; page-break-after:always; break-after:page; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header class="bar">
+  <h1>図鑑</h1>
+  <span class="sub" id="title"></span>
+  <select id="style"><option value="line">線画</option><option value="color">色つき</option></select>
+  <button id="print">印刷・PDF</button>
+  <a href="/" class="sub">← ビューアーに戻る</a>
+  <span id="progress"></span>
+</header>
+<main>
+  <nav class="toc" id="toc" hidden><h2>目次</h2><ol id="tocList"></ol></nav>
+  <div id="plates"><p class="empty">読み込んでいます…</p></div>
+</main>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+
+const $ = id => document.getElementById(id);
+const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const mm = v => (v * 1000).toFixed(1).replace(/\.0$/, '');
+const toBl = v => [v.x, -v.z, v.y];                         // three.js → Blender の座標
+const AXIS = v => { const b = toBl(v); const i = [0, 1, 2].reduce((a, k) => Math.abs(b[k]) > Math.abs(b[a]) ? k : a, 0); return 'XYZ'[i]; };
+
+/* ---------------------------------------------------------------- 線画のレンダラー */
+const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+renderer.setPixelRatio(1);
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight(0xffffff, 0xd4d7dc, 2.0));
+const key = new THREE.DirectionalLight(0xffffff, 0.9);
+scene.add(key);
+const fill = new THREE.MeshLambertMaterial({ color: 0xffffff, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+const edgeMat = new LineMaterial({ color: 0x15171a, linewidth: 1.5 });   // 面の折れ目（30° 以上）の線
+const normalMat = new THREE.MeshNormalMaterial();
+
+const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const quadMat = new THREE.ShaderMaterial({
+  uniforms: { tColor: { value: null }, tNormal: { value: null }, tDepth: { value: null }, px: { value: new THREE.Vector2() },
+              nThr: { value: 0.35 }, dThr: { value: 0.003 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tColor, tNormal, tDepth; uniform vec2 px; uniform float nThr, dThr; varying vec2 vUv;
+    float D(vec2 o){ return texture2D(tDepth, vUv + o).x; }
+    void main(){
+      // 輪郭 = 背景との境目、または奥行きの 2 階差分（平らな面なら斜めでも 0、段差で大きくなる）
+      float d = D(vec2(0.));
+      float l = D(vec2(-px.x,0.)), r = D(vec2(px.x,0.)), u = D(vec2(0.,px.y)), b = D(vec2(0.,-px.y));
+      bool bg = d > 0.9999;
+      float e = 0.0;
+      if (bg != (l > 0.9999) || bg != (r > 0.9999) || bg != (u > 0.9999) || bg != (b > 0.9999)) e = 1.0;
+      else if (!bg) e = step(dThr, max(abs(l + r - 2.0*d), abs(u + b - 2.0*d)));
+      vec3 c = bg ? vec3(1.0) : pow(texture2D(tColor, vUv).rgb, vec3(1.0/2.2));
+      gl_FragColor = vec4(mix(c, vec3(0.07, 0.08, 0.09), e), 1.0);
+    }`,
+});
+const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), quadMat);
+const quadScene = new THREE.Scene();
+quadScene.add(quad);
+
+function targets(w, h) {
+  const color = new THREE.WebGLRenderTarget(w, h, { samples: 4 });
+  const nd = new THREE.WebGLRenderTarget(w, h);
+  nd.depthTexture = new THREE.DepthTexture(w, h);
+  return { color, nd };
+}
+
+let model = null, meshes = [], styleColor = false;
+
+function setEdges(on) { for (const m of meshes) for (const c of m.children) if (c.userData.edge) c.visible = on; }
+function inSet(m, set) { let p = m; while (p) { if (set.has(p.name)) return true; p = p.parent; } return false; }
+function setVisible(names) {
+  const set = new Set(names);
+  model.traverse(o => { if (o.isMesh) o.visible = false; });
+  for (const m of meshes) {
+    let p = m, on = false;
+    while (p) { if (set.has(p.name)) { on = true; break; } p = p.parent; }
+    m.visible = on;
+  }
+}
+function boxOf(names) {
+  const set = new Set(names), box = new THREE.Box3();
+  for (const m of meshes) {
+    let p = m, on = false;
+    while (p) { if (set.has(p.name)) { on = true; break; } p = p.parent; }
+    if (on) box.expandByObject(m);
+  }
+  return box;
+}
+
+/** 正投影で描いて、線画の画像（canvas）と投影用のカメラを返す */
+function draw(box, dir, up, w, h, pad) {
+  const c = box.getCenter(new THREE.Vector3());
+  const r = box.getSize(new THREE.Vector3()).length() / 2 || 0.01;
+  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.0001, 10);
+  cam.up.copy(up);
+  cam.position.copy(c).addScaledVector(dir, r * 3);
+  cam.lookAt(c);
+  cam.updateMatrixWorld();
+  // 投影したときの大きさから、余白込みで枠を決める
+  const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0), upv = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
+  const corners = [];
+  for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
+  const ex = Math.max(...corners.map(p => p.clone().sub(c).dot(right))) * 2, ey = Math.max(...corners.map(p => p.clone().sub(c).dot(upv))) * 2;
+  if (typeof h === 'function') h = Math.round(h(ex / Math.max(ey, 1e-6)));
+  const a = w / h;
+  const half = Math.max(ey, ex / a) / 2 / (1 - pad);
+  Object.assign(cam, { left: -half * a, right: half * a, top: half, bottom: -half, near: r * 3 - r * 1.05, far: r * 3 + r * 1.05 });
+  cam.updateProjectionMatrix();
+  key.position.copy(c).add(new THREE.Vector3(-0.4, 1, 0.6).multiplyScalar(r * 4));
+  const t = targets(w, h);
+  renderer.setSize(w, h, false);
+  edgeMat.resolution.set(w, h);
+  for (const m of meshes) m.material = styleColor ? m.userData.mat : fill;
+  setEdges(true);
+  renderer.setRenderTarget(t.color); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.render(scene, cam);
+  setEdges(false);
+  scene.overrideMaterial = normalMat;
+  renderer.setRenderTarget(t.nd); renderer.setClearColor(0x000000, 1); renderer.clear(); renderer.render(scene, cam);
+  scene.overrideMaterial = null;
+  for (const m of meshes) m.material = m.userData.mat;
+  Object.assign(quadMat.uniforms.tColor, { value: t.color.texture });
+  quadMat.uniforms.tNormal.value = t.nd.texture;
+  quadMat.uniforms.tDepth.value = t.nd.depthTexture;
+  quadMat.uniforms.px.value.set(1.2 / w, 1.2 / h);
+  renderer.setRenderTarget(null); renderer.setClearColor(0xffffff, 1); renderer.clear();
+  renderer.render(quadScene, quadCam);
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  cv.getContext('2d').drawImage(renderer.domElement, 0, 0);
+  t.color.dispose(); t.nd.dispose();
+  const project = p => { const v = p.clone().project(cam); return [(v.x + 1) / 2 * w, (1 - v.y) / 2 * h]; };
+  // 画面上の点 (x, y) から光線を飛ばし、いちばん手前に当たったものを返す
+  const ray = new THREE.Raycaster();
+  const pick = (x, y) => {
+    ray.setFromCamera(new THREE.Vector2(x / w * 2 - 1, 1 - y / h * 2), cam);
+    return ray.intersectObjects(meshes.filter(m => m.visible), false)[0] || null;
+  };
+  return { cv, cam, project, pick, right, up: upv, corners, center: c };
+}
+
+/* ---------------------------------------------------------------- 注記（寸法線・引き出し線） */
+function arrow(g, x0, y0, x1, y1) {
+  const a = Math.atan2(y1 - y0, x1 - x0), s = 10;
+  for (const [x, y, aa] of [[x0, y0, a], [x1, y1, a + Math.PI]]) {
+    g.beginPath(); g.moveTo(x, y);
+    g.lineTo(x + s * Math.cos(aa + 0.3), y + s * Math.sin(aa + 0.3));
+    g.lineTo(x + s * Math.cos(aa - 0.3), y + s * Math.sin(aa - 0.3)); g.closePath(); g.fill();
+  }
+}
+function dims(v) {
+  const g = v.cv.getContext('2d');
+  const pts = v.corners.map(v.project);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const ex = Math.max(...v.corners.map(p => p.clone().sub(v.center).dot(v.right))) * 2;
+  const ey = Math.max(...v.corners.map(p => p.clone().sub(v.center).dot(v.up))) * 2;
+  g.strokeStyle = g.fillStyle = '#c0392b'; g.lineWidth = 1.5; g.font = '600 19px ui-monospace,Menlo,monospace';
+  const yb = Math.min(y1 + 34, v.cv.height - 12), xr = Math.min(x1 + 34, v.cv.width - 12);
+  g.setLineDash([3, 3]);
+  g.beginPath(); g.moveTo(x0, y1 + 4); g.lineTo(x0, yb + 5); g.moveTo(x1, y1 + 4); g.lineTo(x1, yb + 5);
+  g.moveTo(x1 + 4, y0); g.lineTo(xr + 5, y0); g.moveTo(x1 + 4, y1); g.lineTo(xr + 5, y1); g.stroke();
+  g.setLineDash([]);
+  g.beginPath(); g.moveTo(x0, yb); g.lineTo(x1, yb); g.moveTo(xr, y0); g.lineTo(xr, y1); g.stroke();
+  arrow(g, x0, yb, x1, yb); arrow(g, xr, y0, xr, y1);
+  g.textAlign = 'center'; g.textBaseline = 'bottom';
+  const tx = `${mm(ex)}`;
+  g.fillStyle = '#fff'; g.fillRect((x0 + x1) / 2 - g.measureText(tx).width / 2 - 3, yb - 22, g.measureText(tx).width + 6, 20);
+  g.fillStyle = '#c0392b'; g.fillText(tx, (x0 + x1) / 2, yb - 2);
+  g.save(); g.translate(xr - 2, (y0 + y1) / 2); g.rotate(-Math.PI / 2);
+  const ty = `${mm(ey)}`;
+  g.fillStyle = '#fff'; g.fillRect(-g.measureText(ty).width / 2 - 3, -22, g.measureText(ty).width + 6, 20);
+  g.fillStyle = '#c0392b'; g.fillText(ty, 0, -2); g.restore();
+  g.fillStyle = '#5f6672'; g.font = '16px "Hiragino Sans","Noto Sans JP",sans-serif'; g.textAlign = 'left'; g.textBaseline = 'top';
+  g.fillText(`横 ${AXIS(v.right)} ・ 縦 ${AXIS(v.up)}（mm）`, 10, 8);
+}
+function callouts(v, labels) {
+  const g = v.cv.getContext('2d');
+  const W = v.cv.width, H = v.cv.height;
+  const items = labels.map(l => {
+    const b = boxOf(l.objects);
+    if (b.isEmpty()) return null;
+    const [cx0, cy0] = v.project(b.getCenter(new THREE.Vector3()));
+    // 引き出し線の先は「その部品の、見えている面の上」に置く。中心が隠れていたら、中心に近い頂点から探す
+    const set = new Set(l.objects);
+    const cand = [[cx0, cy0]];
+    const p = new THREE.Vector3();
+    for (const m of meshes) {
+      if (!m.visible || !inSet(m, set)) continue;
+      const pos = m.geometry.attributes.position, step = Math.max(1, Math.floor(pos.count / 60));
+      for (let i = 0; i < pos.count; i += step) cand.push(v.project(p.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld)));
+    }
+    cand.sort((a, b2) => Math.hypot(a[0] - cx0, a[1] - cy0) - Math.hypot(b2[0] - cx0, b2[1] - cy0));
+    for (const [x, y] of cand.slice(0, 80)) {
+      // 頂点そのものは輪郭の上なので、中心の方へ少し寄せてから当てる
+      const k = (x === cx0 && y === cy0) ? 0 : 0.15;
+      const hx = x + (cx0 - x) * k, hy = y + (cy0 - y) * k;
+      const hit = v.pick(hx, hy);
+      if (hit && inSet(hit.object, set)) return { x: hx, y: hy, text: l.text };
+    }
+    return { x: cx0, y: cy0, text: l.text };
+  }).filter(Boolean);
+  const cx = W / 2;
+  for (const side of [-1, 1]) {
+    const col = items.filter(it => (it.x < cx) === (side < 0)).sort((a, b) => a.y - b.y);
+    const gap = 40, ly = [];
+    let last = 30;
+    for (const it of col) { const y = Math.max(it.y, last + gap); ly.push(y); last = y; }
+    const over = last - (H - 24);
+    if (over > 0) for (let i = 0; i < ly.length; i++) ly[i] -= over;
+    if (ly.length && ly[0] < 24) { const sh = 24 - ly[0]; for (let i = 0; i < ly.length; i++) ly[i] += sh; }
+    for (let i = ly.length - 2; i >= 0; i--) ly[i] = Math.min(ly[i], ly[i + 1] - gap);
+    g.font = '600 26px "Hiragino Sans","Noto Sans JP",sans-serif'; g.textBaseline = 'middle';
+    col.forEach((it, i) => {
+      const lx = side < 0 ? 16 : W - 16, tw = g.measureText(it.text).width;
+      const ex = side < 0 ? lx + tw + 8 : lx - tw - 8;
+      g.strokeStyle = '#2f6fde'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(it.x, it.y); g.lineTo(ex, ly[i]); g.lineTo(side < 0 ? lx + tw + 4 : lx - tw - 4, ly[i]); g.stroke();
+      g.fillStyle = '#2f6fde'; g.beginPath(); g.arc(it.x, it.y, 5, 0, Math.PI * 2); g.fill(); g.fillStyle = '#1b1d22';
+      g.textAlign = side < 0 ? 'left' : 'right'; g.fillText(it.text, lx, ly[i]);
+    });
+  }
+}
+
+/* ---------------------------------------------------------------- ページ */
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const VIEWS = [
+  { cap: '正面図（-Y 側から）', dir: V(0, 0, 1), up: V(0, 1, 0) },
+  { cap: '側面図（+X 側から）', dir: V(1, 0, 0), up: V(0, 1, 0) },
+  { cap: '平面図（真上から）', dir: V(0, 1, 0), up: V(0, 0, -1) },
+];
+
+async function build() {
+  const q = new URLSearchParams(location.search);
+  const list = await (await fetch('/api/runs', { cache: 'no-store' })).json();
+  const okRuns = list.runs.filter(r => r.ok);
+  const runId = Number(q.get('run')) || (okRuns.length ? okRuns[okRuns.length - 1].id : 0);
+  if (!runId) { $('plates').innerHTML = '<p class="empty">まだ実行がありません。</p>'; return; }
+  const run = await (await fetch(`/api/runs/${runId}`, { cache: 'no-store' })).json();
+  $('title').textContent = `実行 ${run.id}「${run.title}」`;
+  document.title = `図鑑 — ${run.title}`;
+  const entries = run.catalog || [];
+  if (!entries.length) {
+    $('plates').innerHTML = '<p class="empty">この実行には図鑑の項目がありません。スクリプトで qm.catalog(...) を使って登録してください。</p>';
+    return;
+  }
+  const gltf = await new GLTFLoader().parseAsync(await (await fetch(`/api/runs/${runId}/model.glb`)).arrayBuffer(), '');
+  model = gltf.scene; scene.add(model);
+  model.traverse(o => { if (o.isMesh) meshes.push(o); });
+  for (const m of meshes) {
+    const g = new LineSegmentsGeometry().fromEdgesGeometry(new THREE.EdgesGeometry(m.geometry, 30));
+    const ln = new LineSegments2(g, edgeMat);
+    ln.userData.edge = true; ln.raycast = () => {};
+    m.add(ln);
+    m.userData.mat = m.material;
+  }
+
+  $('toc').hidden = false;
+  $('tocList').innerHTML = entries.map((e, i) => `<li><a href="#p-${i}">${esc(e.group ? e.group + '：' : '')}${esc(e.title)}</a></li>`).join('');
+  $('plates').innerHTML = '';
+  for (let i = 0; i < entries.length; i++) {
+    $('progress').textContent = `描いています… ${i + 1} / ${entries.length}`;
+    await new Promise(r => setTimeout(r, 0));
+    $('plates').append(plate(entries[i], i));
+  }
+  $('progress').textContent = `${entries.length} 項目`;
+}
+
+function plate(e, i) {
+  const sec = document.createElement('section');
+  sec.className = 'plate'; sec.id = `p-${i}`;
+  if (!e.objects.length) {
+    sec.innerHTML = `<div class="head"><span class="no">${i + 1}</span><h2>${esc(e.title)}</h2></div><p class="empty">該当するオブジェクトがありません。</p>`;
+    return sec;
+  }
+  setVisible(e.objects);
+  const box = boxOf(e.objects);
+  const iso = draw(box, V(1, 0.75, 1.15).normalize(), V(0, 1, 0), 1100, a => Math.min(1250, Math.max(560, 1100 / a)), 0.26);
+  callouts(iso, e.labels || []);
+  const orthos = VIEWS.map(vw => { const d = draw(box, vw.dir, vw.up, 620, 400, 0.22); dims(d); return { ...d, cap: vw.cap }; });
+  const s = box.getSize(new THREE.Vector3());
+  const rows = (e.labels || []).map(l => {
+    const b = boxOf(l.objects), z = b.getSize(new THREE.Vector3());
+    return `<tr><td>${esc(l.text)}</td><td class="num">${l.objects.length}</td><td class="num">${mm(z.x)} × ${mm(z.z)} × ${mm(z.y)}</td></tr>`;
+  }).join('');
+  sec.innerHTML = `
+    <div class="head"><span class="no">${String(i + 1).padStart(2, '0')}</span><h2>${esc(e.title)}</h2>
+      <span class="group">${esc(e.group || '')}　部品 ${e.objects.length} 点・全体 ${mm(s.x)} × ${mm(s.z)} × ${mm(s.y)} mm（X×Y×Z）</span></div>
+    ${e.description ? `<p class="desc">${esc(e.description)}</p>` : ''}
+    <div class="figs">
+      <figure><img alt="等角図"><figcaption>等角図（引き出し線は主な部品）</figcaption></figure>
+      <div class="ortho">${orthos.map(o => `<figure><img alt="${esc(o.cap)}"><figcaption>${esc(o.cap)}　寸法は mm</figcaption></figure>`).join('')}</div>
+    </div>
+    ${rows ? `<table><thead><tr><th>部品</th><th>オブジェクト数</th><th>大きさ X × Y × Z（mm）</th></tr></thead><tbody>${rows}</tbody></table>` : ''}`;
+  const imgs = sec.querySelectorAll('img');
+  imgs[0].src = iso.cv.toDataURL('image/png');
+  orthos.forEach((o, k) => { imgs[k + 1].src = o.cv.toDataURL('image/png'); });
+  return sec;
+}
+
+$('print').onclick = () => print();
+$('style').onchange = async () => {
+  styleColor = $('style').value === 'color';
+  $('plates').innerHTML = '<p class="empty">描き直しています…</p>';
+  scene.remove(model); meshes = []; model = null;
+  await build();
+};
+build().catch(err => { $('plates').innerHTML = `<p class="empty">読み込めませんでした: ${esc(err.message || err)}</p>`; });
+</script>
+</body>
+</html>
