@@ -79,7 +79,7 @@ python server.py
 
 ## AI をつなぐ
 
-使う AI のアプリによって、つなぎ方が2通りあります。**どちらか片方だけ**にしてください。
+使う AI のアプリによって、つなぎ方が2通りあります。ふだんはどちらか片方で十分です。
 
 | | Claude Code | Claude Desktop |
 |---|---|---|
@@ -102,7 +102,10 @@ Claude Code を開き直し、`/mcp` で `bpy-modeler` がつながっている�
 
 ### Claude Desktop
 
-Claude Desktop がこのサーバーを自分で起動します（`--stdio`）。**`start.bat` は動かさないでください**（ポート 8000 を取り合います）。
+Claude Desktop がこのサーバーを自分で起動します（`--stdio`）。`start.bat` を動かす必要はありません。
+
+両方を同時に使っても困らないようにしてあります。サーバーが2つ動いていても、結果は同じ `output` フォルダに保存され、
+どちらのビューアーにも全部の結果が出ます。後から起動した方は、ポート 8000 が bpy モデラーで使われていれば、そのビューアーに相乗りします。
 
 仮想環境の python で、付属の `setup_claude_desktop.py` を一度だけ実行します。設定ファイル
 （`claude_desktop_config.json`）を探して、もとの設定は残したまま bpy-modeler を登録します。書き換える前に `.bak` を作ります。
@@ -204,7 +207,8 @@ Claude Desktop では、入力欄の「＋」などから開くツール一覧�
 
 | 症状 | 見るところ |
 |---|---|
-| ビューアーが開かない（Claude Code） | `start.bat` の黒い画面にエラーが出ていないか |
+| ビューアーが開かない（Claude Code） | `start.bat` の黒い画面にエラーが出ていないか。「すでに動いています」と出たら、案内された URL を開く |
+| ビューアーに結果が出ない | AI に返された結果の最後の「ビューアー: …」の URL を開く（8000 番がほかのプログラムに使われていると、8001 番などで開く） |
 | ビューアーが開かない（Claude Desktop） | 設定ファイルが `{ … }` 1つになっているか（`setup_claude_desktop.py` を実行し直すと直る）。Claude Desktop を完全に終了したか |
 | Claude Desktop がサーバーを起動しない | ログ `%LOCALAPPDATA%\Claude\logs\mcp.log`（以前の版は `%APPDATA%\Claude\logs`）が空なら、設定ファイルが読まれていない |
 | 「bpy-modeler のツールがない」と言われる | ツール一覧で `bpy-modeler` がオンか。Claude Code なら `/mcp` |
