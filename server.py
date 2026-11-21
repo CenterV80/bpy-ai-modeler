@@ -273,6 +273,29 @@ def layout_problems(per: list[dict]) -> list[str]:
     return out
 
 
+def resolve_catalog(per: list[dict]) -> list[dict]:
+    """qm.catalog で登録された項目を、実際のオブジェクト名と外形の寸法に直す"""
+    items = json.loads(bpy.context.scene.get("qm_catalog", "[]"))
+    names = [p["name"] for p in per]
+    out = []
+    for it in items:
+        pats = it.get("parts") or []
+        objs = [n for n in names if any(n == p or n.startswith(p) for p in pats)]
+        boxes = [p for p in per if p["name"] in objs and "min" in p]
+        size = None
+        if boxes:
+            lo = [min(b["min"][i] for b in boxes) for i in range(3)]
+            hi = [max(b["max"][i] for b in boxes) for i in range(3)]
+            size = {"min": lo, "max": hi}
+        labels = []
+        for pre, text in (it.get("labels") or {}).items():
+            hit = [n for n in objs if n == pre or n.startswith(pre)]
+            if hit:
+                labels.append({"prefix": pre, "text": text, "objects": hit})
+        out.append({**it, "objects": objs, "box": size, "labels": labels})
+    return out
+
+
 def problems_of(q: dict, per: list[dict]) -> list[str]:
     def where(key: str) -> str:
         names = [p["name"] for p in per if p[key]]
@@ -781,7 +804,7 @@ def execute(code: str, title: str) -> dict:
         STATE["scene_run"] = None
         run = {"id": run_id, "title": title or first_comment(code) or f"実行 {run_id}", "time": time.strftime("%Y-%m-%d %H:%M:%S"),
                "ok": ok, "output": out[-6000:], "stats": None, "objects": [], "problems": [], "files": [], "materials": [],
-               "units": bpy.context.scene.get("qm_units", "cm")}
+               "units": bpy.context.scene.get("qm_units", "cm"), "catalog": []}
         if ok:
             stats, per, wire = inspect_scene()
             (folder / "wire.json").write_text(json.dumps([round(x, 5) for x in wire]), encoding="utf-8")
@@ -790,6 +813,7 @@ def execute(code: str, title: str) -> dict:
             except Exception as e:  # テクスチャで失敗しても形は書き出す
                 materials, errs = [], [f"マテリアル・テクスチャの準備に失敗: {e}"]
             errs += export_all(folder)
+            run["catalog"] = resolve_catalog(per)
             run.update(stats=stats, objects=per, problems=problems_of(stats, per) + errs, materials=materials,
                        files=[f for f in FORMATS if (folder / f"model.{f}").exists()])
             STATE["scene_run"] = run_id
@@ -834,6 +858,10 @@ def report(run: dict) -> str:
                      + (f" ⚠ {'、'.join(extra)}" if extra else ""))
     if len(run["objects"]) > 40:
         lines.append(f"- ほか {len(run['objects']) - 40} 個")
+    if run.get("catalog"):
+        lines += ["", f"図鑑の項目: {len(run['catalog'])} 件（ビューアーの「図鑑」で見られる）"]
+        for c in run["catalog"][:30]:
+            lines.append(f"- {c['title']}（{c['key']}）: 部品 {len(c['objects'])} 個" + ("" if c["objects"] else " ⚠ 該当するオブジェクトがない"))
     mats = run.get("materials") or []
     if mats:
         lines += ["", "マテリアル（UV は面の向きに合わせた箱投影で自動作成。mesh[\"keep_uv\"] = True なら自分の UV を使う）:"]
@@ -1022,7 +1050,11 @@ async def export(directory: str, name: str = "model", formats: list[str] | None 
 
 def run_public(r: dict) -> dict:
     return {**{k: r[k] for k in ("id", "title", "time", "ok", "stats", "problems", "files", "seconds")},
-            "materials": r.get("materials", [])}
+            "materials": r.get("materials", []), "catalog_count": len(r.get("catalog") or [])}
+
+
+async def page_catalog(_: Request):
+    return FileResponse(ROOT / "static" / "catalog.html", headers={"Cache-Control": "no-store"})
 
 
 async def page_index(_: Request):
@@ -1066,6 +1098,7 @@ async def api_texture(req: Request):
 
 VIEW_ROUTES = [
     ("/", page_index),
+    ("/catalog", page_catalog),
     ("/textures/{name}", api_texture),
     ("/api/runs", api_runs),
     ("/api/runs/{run_id:int}", api_run),
