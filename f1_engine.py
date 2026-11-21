@@ -21,7 +21,7 @@ import f1
 
 __all__ = ["v6_frame", "v6_mains", "v6_block", "v6_heads", "v6_head_gaskets", "v6_cam_covers", "v6_front_cover",
            "v6_sump", "v6_crankshaft", "v6_conrods", "v6_pistons", "v6_valves", "v6_camshafts", "v6_studs",
-           "v6_plugs_injectors", "v6_pumps", "v6_oil_jets", "v6_engine_real"]
+           "v6_plugs_injectors", "v6_pumps", "water_pump_point", "v6_oil_jets", "v6_engine_real"]
 
 MM = 0.001
 
@@ -719,16 +719,25 @@ def v6_plugs_injectors(mats=None):
     return parts
 
 
+def water_pump_point(bank: int):
+    """ウォーターポンプの中心と、外向き（吸い口の向き）。ブロックの外側の横、2 番と 3 番のシリンダーの間（ミリ）"""
+    ys = [y for b, i, y in f1.v6_cylinders() if b == bank]
+    c = f1.v6_point(bank, 150, -82, (ys[1] + ys[2]) / 2)
+    d, inner = v6_frame(bank)
+    return c, -inner
+
+
 def v6_pumps(mats=None):
-    """ウォーターポンプ 2 個（渦巻きのハウジングと羽根車）、オイルのスカベンジポンプ（ハウジングと 3 段のロータ）、
-    オイルの圧送ポンプ、オイルフィルター（缶とエレメント）、燃料の高圧ポンプ"""
+    """ウォーターポンプ 2 個（ブロックの横。渦巻きのハウジングと羽根車）、オイルのスカベンジポンプ（ハウジングと 3 段のロータ）、
+    燃料の高圧ポンプ（V の谷）。オイルフィルターはオイルタンクに付ける（作例）"""
     m = _mats(mats)
     L = _L()
     cz, yf, yr = L["crank_z"], L["engine_front"], L["gearbox_y0"]
     yb0 = yf + 40
     parts = []
+    # ウォーターポンプ：エンジンの前の面はサバイバルセルの隔壁に直接留めるので、ポンプはブロックの外側の横に付ける
     for bank, tg in ((-1, "L"), (1, "R")):
-        c = f1.v6_point(bank, 130, -40, yf - 15)
+        c, out = water_pump_point(bank)
         h = qm.lathe(f"Engine_WaterPump{tg}", [(0.020 * 1, -0.018), (0.042, -0.015), (0.044, 0.0), (0.042, 0.015), (0.030, 0.018)], seg=32,
                      material=m["alu"])
         qm.cut(h, [qm.lathe("_wpi", [(0.016, -0.025), (0.038, -0.012), (0.038, 0.012), (0.016, 0.025)], seg=32)])
@@ -739,7 +748,7 @@ def v6_pumps(mats=None):
             imp.append(v)
         sh = qm.cylinder(f"Engine_WaterPump{tg}_Shaft", 0.006, 0.05, seg=12, origin="center", material=m["steel"])
         objs = [h] + imp + [sh]
-        qm.orient(objs, origin=c * MM, x_axis=(1, 0, 0), z_axis=(0, -1, 0))
+        qm.orient(objs, origin=c * MM, x_axis=(0, 1, 0), z_axis=out)
         parts += objs
     # スカベンジポンプ：ハウジング（中空）と 3 段のロータ、軸
     sx, sz = 150, cz - 125
@@ -754,15 +763,8 @@ def v6_pumps(mats=None):
         qm.orient(ring_, origin=(sx * MM, (y - 8) * MM, sz * MM), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
         parts += [g, ring_]
     parts.append(_cyl_y("Engine_ScavengeShaft", 4, yb0 + 22, yr - 32, x=sx, z=sz, seg=12, material=m["steel"]))
-    # オイルフィルター（缶とエレメント）
-    fc = _cyl_y("Engine_OilFilter", 30, yf - 42, yf - 2, x=-90, z=220, seg=32, material=m["ti"])
-    qm.cut(fc, [_cyl_y("_ofi", 27.5, yf - 40, yf + 1, x=-90, z=220, seg=32)])
-    el = _cyl_y("Engine_OilFilter_Element", 25, yf - 38, yf - 6, x=-90, z=220, seg=32,
-                material=qm.material("F1_FilterPaper", (0.85, 0.80, 0.55), metal=0.0, rough=0.9))
-    qm.cut(el, [_cyl_y("_ofc", 10, yf - 40, yf - 4, x=-90, z=220, seg=24)])
-    parts += [fc, el]
-    hp = f1.v6_point(1, 250, 0, yf - 17)
-    parts.append(_cyl_y("Engine_FuelPumpHP", 22, yf - 35, yf + 1, x=hp.x, z=hp.z, seg=24, material=m["steel"]))
+    # 燃料の高圧ポンプ：V の谷の前寄り（前の面は隔壁に付くので、前には出さない）
+    parts.append(_cyl_y("Engine_FuelPumpHP", 22, yf + 45, yf + 80, x=0, z=cz + 200, seg=24, material=m["steel"]))
     return parts
 
 
