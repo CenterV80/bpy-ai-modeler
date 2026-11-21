@@ -1397,7 +1397,7 @@ def pipe(name: str, points, r: float = 0.019, kind: str = "hose", mats=None):
     """配管（冷却水・オイル・燃料・吸気・高電圧ケーブル）。points はメートルの点。両端に締め付けの輪。戻り値はリスト"""
     cols = {"hose": ((0.05, 0.05, 0.06), 0.0, 0.7), "water": ((0.10, 0.18, 0.45), 0.0, 0.6), "oil": ((0.45, 0.30, 0.08), 0.0, 0.6),
             "fuel": ((0.55, 0.45, 0.05), 0.0, 0.6), "air": ((0.05, 0.05, 0.06), 0.1, 0.5), "hv": ((0.95, 0.45, 0.05), 0.0, 0.5),
-            "brake": ((0.55, 0.55, 0.57), 0.8, 0.45), "hydraulic": ((0.60, 0.58, 0.52), 0.8, 0.4), "loom": ((0.04, 0.04, 0.05), 0.0, 0.8),
+            "brake": ((0.55, 0.55, 0.57), 0.8, 0.45), "wire": ((0.05, 0.05, 0.05), 0.0, 0.7), "hydraulic": ((0.60, 0.58, 0.52), 0.8, 0.4), "loom": ((0.04, 0.04, 0.05), 0.0, 0.8),
             "extinguisher": ((0.70, 0.70, 0.72), 0.9, 0.3)}
     c, metal, rough = cols.get(kind, cols["hose"])
     m = qm.material(f"F1_Pipe{kind.capitalize()}", c, metal=metal, rough=rough)
@@ -1435,6 +1435,7 @@ VALVE = {"in_r": 14.5, "ex_r": 12.5, "in_u": 16.0, "ex_u": -18.0, "dy": 15.0, "t
 
 def v6_valvetrain(name: str = "Valve", mats=None):
     """動弁系（吸気 2・排気 2 のバルブ、空気ばね、タペット、左右のバンクに 2 本ずつのカムシャフトとカムのギア）。
+    カムのギア（36 歯・モジュール 1.5）は前のカバーの中、y = engine_front + 42 の面に並ぶ（v6_gear_train がそこまで回す）。
     バルブは V の内側（吸気）と外側（排気）へ VALVE["tilt"] 度ずつ傾ける。戻り値はリスト"""
     MM = 0.001
     steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
@@ -1461,7 +1462,7 @@ def v6_valvetrain(name: str = "Valve", mats=None):
                     qm.orient([v, spring, tappet], origin=base, x_axis=(0, 1, 0), z_axis=ax)
                     parts += [v, spring, tappet]
             # カムシャフト（Y 方向）と、バルブごとのカム
-            y0, y1 = ys[0] - 100, min(ys[-1] + 70, LAYOUT["gearbox_y0"] - 30)
+            y0, y1 = LAYOUT["engine_front"] + 40, min(ys[-1] + 70, LAYOUT["gearbox_y0"] - 30)
             c0 = v6_point(bank, cam_t, cam_u, y0) * MM
             c1 = v6_point(bank, cam_t, cam_u, y1) * MM
             parts.append(qm.tube(f"Cam_{tag}{kind}", [c0, c1], radius=0.012, seg=16, material=cam_m))
@@ -1478,7 +1479,7 @@ def v6_valvetrain(name: str = "Valve", mats=None):
                     secs = [[tuple((ctr + Vector((0, yy, 0)) - ax * 0 + d * pt + inner * pu) * MM) for pt, pu in prof] for yy in (-6, 6)]
                     parts.append(qm.loft(f"Cam_{tag}{kind}Lobe{i + 1}{'ab'[j]}", secs, material=cam_m))
             g = qm.gear(f"Cam_{tag}{kind}Gear", 36, 0.0015, 0.010, bore=0.008, material=cam_m)
-            qm.orient(g, origin=v6_point(bank, cam_t, cam_u, y0 + 15) * MM, x_axis=(1, 0, 0), z_axis=(0, 1, 0))
+            qm.orient(g, origin=v6_point(bank, cam_t, cam_u, LAYOUT["engine_front"] + 42) * MM, x_axis=(1, 0, 0), z_axis=(0, 1, 0))
             parts.append(g)
     return parts
 
@@ -1707,6 +1708,148 @@ def ride_height_sensor(name: str, location, mats=None):
     return [b, w]
 
 
+
+
+# ---------------------------------------------------------------- 残りの部品（ギア列・ブレーキダクト・アンテナ・レインライト など）
+
+
+def mesh_point(c1, c2, d1, d2, side: int = 1):
+    """2 つの円の交点（ギアをかみ合わせる位置を求める）。c1・c2 は (x, z)、d1・d2 はそれぞれからの距離。
+    side で 2 つの交点のどちらかを選ぶ。届かないときは c1 から c2 の向きへ d1 の点を返す"""
+    a, b = Vector(c1), Vector(c2)
+    d = (b - a).length
+    u = (b - a) / d
+    x = (d1 ** 2 - d2 ** 2 + d ** 2) / (2 * d)
+    h = math.sqrt(max(d1 ** 2 - x ** 2, 0.0))
+    return a + u * x + Vector((u.y, -u.x)) * h * side
+
+
+def v6_gear_train(name: str = "GearTrain", mats=None):
+    """前のカバーの中のギア列（クランクのギア 60 歯 → アイドラー 2 枚 → 頭の複合ギア → カムのギア 2 枚、左右のバンク）。
+    大きいギアはモジュール 2.5、カムまわりは 1.5。歯数と位置は推定。戻り値はリスト"""
+    MM = 0.001
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    yf, cz = LAYOUT["engine_front"], LAYOUT["crank_z"]
+    y_big, y_cam = yf + 30, yf + 42
+    tl = math.radians(VALVE["tilt"])
+    cam_t = V6["deck"] + 2 + (VALVE["len"] + 16) * math.cos(tl)
+    parts = []
+
+    def put(nm, teeth, module, x, z, y, width=0.010):
+        g = qm.gear(nm, teeth, module, width, bore=0.006, material=steel)
+        qm.orient(g, origin=(x * MM, y * MM, z * MM), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
+        parts.append(g)
+        return g
+
+    put(f"{name}_Crank", 60, 0.0025, 0, cz, y_big)
+    for bank, tag in ((-1, "L"), (1, "R")):
+        ci = v6_point(bank, cam_t, VALVE["in_u"] + (VALVE["len"] + 16) * math.sin(tl), 0)
+        ce = v6_point(bank, cam_t, VALVE["ex_u"] - (VALVE["len"] + 16) * math.sin(tl), 0)
+        mid = (ci + ce) / 2
+        r_cam = 1.5 * 36 / 2
+        r_mid = (ci - ce).length / 2 - r_cam                      # カムのギア 2 枚の間の小さなギア
+        t_mid = max(8, round(2 * r_mid / 1.5))
+        put(f"{name}_{tag}HeadSmall", t_mid, 0.0015, mid.x, mid.z, y_cam)
+        C0, Cb = Vector((0, cz)), Vector((mid.x, mid.z))
+        r0, r1, r2, rb = 75.0, 42.5, 42.5, 40.0                    # クランク 60 歯、アイドラー 34 歯 ×2、複合ギアの大 32 歯
+        dir_ = (Cb - C0).normalized()
+        I1 = C0 + dir_ * (r0 + r1)
+        I2 = mesh_point(I1, Cb, r1 + r2, r2 + rb, side=bank)
+        put(f"{name}_{tag}Idler1", 34, 0.0025, I1.x, I1.y, y_big)
+        put(f"{name}_{tag}Idler2", 34, 0.0025, I2.x, I2.y, y_big)
+        put(f"{name}_{tag}HeadBig", 32, 0.0025, mid.x, mid.z, y_big)
+        for nm, p in (("Idler1", I1), ("Idler2", I2), ("Head", Cb)):
+            parts.append(qm.cylinder(f"{name}_{tag}{nm}Shaft", 0.006, (y_cam - y_big + 12) * MM, seg=10, axis="Y",
+                                     location=(p.x * MM, (y_big + y_cam) / 2 * MM + 0.004, p.y * MM), material=steel))
+    return parts
+
+
+def gear_cover(name: str, circles, y0: float, y1: float, margin: float = 0.008, n: int = 32, mats=None):
+    """ギアを覆うカバー（いくつかの円を包む形を、Y 方向に厚みを付けて作る）。circles = [(x, z, 半径), ...]（メートル）。戻り値 [カバー]"""
+    mag = _mk(mats, "magnesium", (0.32, 0.32, 0.34), 0.6, 0.5)
+    pts = []
+    for x, z, r in circles:
+        for k in range(64):
+            a = 2 * math.pi * k / 64
+            pts.append((x + (r + margin) * math.cos(a), z + (r + margin) * math.sin(a)))
+    pts = sorted(set(pts))
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    hull = lower[:-1] + upper[:-1]
+    # 周の長さで等間隔に n 点へ置き直す（断面の点数をそろえ、ふたの格子をきれいにする）
+    L = [0.0]
+    for a, b in zip(hull, hull[1:] + hull[:1]):
+        L.append(L[-1] + math.dist(a, b))
+    out, j = [], 0
+    for k in range(n):
+        t = L[-1] * k / n
+        while L[j + 1] < t:
+            j += 1
+        a, b = hull[j], hull[(j + 1) % len(hull)]
+        f = (t - L[j]) / max(L[j + 1] - L[j], 1e-9)
+        out.append((a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
+    secs = [[(x, y, z) for x, z in out] for y in (y0, y1)]
+    return [qm.loft(name, secs, material=mag)]
+
+
+def brake_duct(name: str, disc_center, out, cal_dir, front: bool = True, mats=None):
+    """ブレーキダクト（ディスクを囲む筒の、キャリパーを除いた部分と、前下の空気の取り入れ口）。
+    disc_center はディスクの中心、out はホイールの外向き、cal_dir はキャリパーの向き。戻り値はリスト"""
+    carbon = _m(mats, "carbon")
+    D, T = BRAKE["front" if front else "rear"]
+    rd, w = D / 2 + 0.026, 0.070
+    c, o = Vector(disc_center), Vector(out).normalized()
+    ex = Vector((0, 1, 0))
+    ey = o.cross(ex)                                   # orient(x=Y, z=out) と同じ座標系
+    cd = Vector(cal_dir)
+    a_cal = math.atan2(cd.dot(ey), cd.dot(ex))
+    gap = math.radians(42)
+    secs = []
+    for zz in (-w / 2, w / 2):
+        ring = []
+        for k in range(25):
+            a = a_cal + gap + (2 * math.pi - 2 * gap) * k / 24
+            ring.append(tuple(c + ex * (rd * math.cos(a)) + ey * (rd * math.sin(a)) + o * zz))
+        secs.append(ring)
+    drum = qm.loft(name, secs, closed=False, material=carbon)
+    qm.solidify(drum, 0.003)
+    edge = c + ex * (rd * -0.92) + Vector((0, 0, -rd * 0.40))
+    path = [c - o * 0.17 + Vector((0, -0.150, -0.085)), c - o * 0.07 + Vector((0, -0.165, -0.082)), edge - o * 0.005]
+    prof = [(x, z) for x, z in rrect(0.060, 0.040, 0.012, 2)]
+    scoop = qm.sweep(f"{name}_Scoop", path, prof, up=(0, 0, 1), material=carbon)
+    return [drum, scoop]
+
+
+def antenna(name: str = "Antenna", base=(0, 0.75, 0.60), mats=None):
+    """テレメトリーのアンテナ（台座と、後ろへ傾いた板）。base は台座の底面の中心。戻り値はリスト"""
+    black = qm.material("F1_Connector", (0.08, 0.08, 0.09), metal=0.1, rough=0.6)
+    x, y, z = base
+    b = qm.box(f"{name}_Base", (0.03, 0.05, 0.008), origin="bottom", location=base, material=black)
+    blade = plate(name, [(y - 0.02, z + 0.006), (y + 0.02, z + 0.006), (y + 0.05, z + 0.075), (y + 0.035, z + 0.075)], 0.004,
+                  axis="X", at=x, material=black)
+    return [b, blade]
+
+
+def rain_light(name: str = "RainLight", center=(0, 3.96, 0.355), size=(0.10, 0.02, 0.04), mats=None):
+    """レインライト（後ろの衝撃吸収構造の後端に付く赤いライト）。center は中心。戻り値はリスト"""
+    red = _m(mats, "light") or qm.material("F1_Light", (0.9, 0.1, 0.1), rough=0.2)
+    black = qm.material("F1_Connector", (0.08, 0.08, 0.09), metal=0.1, rough=0.6)
+    x, y, z = center
+    housing = qm.box(f"{name}_Housing", (size[0] + 0.01, size[1], size[2] + 0.01), origin="center", location=(x, y - 0.004, z),
+                     material=black, bevel=0.003)
+    lens = qm.box(name, size, origin="center", location=(x, y + 0.004, z), material=red, bevel=0.003)
+    return [housing, lens]
+
+
 HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でそのまま使える。前 = -Y、前輪の軸 y=0、上 = Z）
 
 まとめて作る: f1.car(livery=(r,g,b), front_wing_elements=3, wheel_covers=True) → {種類: [オブジェクト...]}
@@ -1758,6 +1901,8 @@ HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でその
   f1.drink_system() / f1.small_box(name, center, size)（ECU・無線・ADR などの箱）/ f1.header_tank(location) / f1.wastegate(location)
 - 油圧: f1.hydraulic_pump(name, location, axis) / f1.accumulator(name, p0, p1) / f1.valve_block(name, center)
 - ノーズ・プランク・センサー: f1.nose_crash(y0, length) / f1.pitot(tip) / f1.plank(y0, y1, width)（厚さ 10mm）/ f1.ride_height_sensor(name, location)
+- 残りの部品: f1.v6_gear_train()（前のカバーの中のギア列）/ f1.gear_cover(name, [(x, z, r)...], y0, y1) / f1.brake_duct(name, disc_center, out, cal_dir) /
+  f1.antenna(base) / f1.rain_light(center) / f1.mesh_point(c1, c2, d1, d2)（ギアをかみ合わせる位置）
 - 冷却・配管: f1.radiator(name, length, height)（原点・Y が長さ）/ f1.pipe(name, [点...], r, kind="water"|"oil"|"fuel"|"air"|"hv"|"brake"|"hydraulic"|"loom"|"extinguisher")。ブレーキ・油圧・配線の束も pipe で
 
 寸法: f1.SPEC（2026 年規定で確認できた値）、f1.EST（推定値）、f1.BRAKE（ディスクの直径・厚み）。変えたいときは f1.EST["height"] = 0.93 のように上書きしてから作る
