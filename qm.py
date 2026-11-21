@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import json
 import math
+import re
 
 import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
 __all__ = ["material", "obj", "box", "cylinder", "lathe", "loft", "sweep", "tube", "quad_sphere", "cap_grid",
-           "circle", "arc", "pivot", "copy", "bevel", "subsurf", "solidify", "expect", "HELP"]
+           "circle", "arc", "polygon", "helix", "ring", "nut", "washer", "bolt", "gear", "flange", "wheel",
+           "pivot", "copy", "array", "radial", "mirror", "bevel", "subsurf", "solidify", "expect", "METRIC", "HELP"]
 
 
 # ---------------------------------------------------------------- マテリアルとオブジェクト
@@ -176,9 +178,10 @@ def loft(name: str, sections, closed: bool = True, cap: bool = True, loop: bool 
     return obj(name, bm, material, location)
 
 
-def lathe(name: str, profile, seg: int = 16, cap: bool = True, material=None, location=(0, 0, 0)):
+def lathe(name: str, profile, seg: int = 16, cap: bool = True, closed: bool = False, material=None, location=(0, 0, 0)):
     """回転体。profile=[(半径, 高さ), ...] を下から上へ。Z 軸まわりに回す。
-    半径 0 の点は極（三角形）になる。端が半径>0 なら cap で四角形の格子でふさぐ（seg は偶数に）"""
+    半径 0 の点は極（三角形）になる。端が半径>0 なら cap で四角形の格子でふさぐ（seg は偶数に）。
+    closed=True なら断面を閉じた輪として扱い、ドーナツ状にする（タイヤ・Oリング・取っ手の輪）"""
     bm = bmesh.new()
     rings = []
     for r, z in profile:
@@ -186,7 +189,8 @@ def lathe(name: str, profile, seg: int = 16, cap: bool = True, material=None, lo
             rings.append([bm.verts.new((0, 0, z))])
         else:
             rings.append([bm.verts.new((x, y, z)) for x, y in circle(seg, r)])
-    for A, B in zip(rings, rings[1:]):
+    pairs = list(zip(rings, rings[1:])) + ([(rings[-1], rings[0])] if closed else [])
+    for A, B in pairs:
         for i in range(seg):
             j = (i + 1) % seg
             if len(A) == 1 and len(B) == 1:
@@ -197,7 +201,7 @@ def lathe(name: str, profile, seg: int = 16, cap: bool = True, material=None, lo
                 bm.faces.new((A[i], A[j], B[0]))
             else:
                 bm.faces.new((A[i], A[j], B[j], B[i]))
-    if cap:
+    if cap and not closed:
         for ring in (rings[0], rings[-1]):
             if len(ring) > 1:
                 cap_grid(bm, ring)
@@ -208,7 +212,7 @@ def cylinder(name: str, r: float = 0.5, h: float = 1.0, seg: int = 16, rows: int
              origin: str = "bottom", material=None, location=(0, 0, 0)):
     """円柱。axis="Z" なら origin="bottom" で底面の中心が原点。axis="X" / "Y" のときは中心が原点"""
     z0 = _origin_shift(origin, h) if axis == "Z" else -h / 2
-    ob = lathe(name, [(r, z0 + h * k / rows) for k in range(rows + 1)], seg, True, material)
+    ob = lathe(name, [(r, z0 + h * k / rows) for k in range(rows + 1)], seg=seg, cap=True, material=material)
     if axis != "Z":
         rot = Matrix.Rotation(math.radians(90), 4, "Y" if axis == "X" else "X")
         ob.data.transform(rot)
@@ -277,6 +281,193 @@ def tube(name: str, points, radius=0.02, seg: int = 8, cap: bool = True, materia
     return sweep(name, points, circle(seg, 1.0), cap=cap, scale=rad, material=material)
 
 
+# ---------------------------------------------------------------- 部品
+
+# メートルねじ（並目）の寸法 [m]。
+# s（六角の二面幅）と m（ナットの高さ）は ISO 4032 の値（最大値）。k（ボルト頭の高さ）と pitch（並目ピッチ）は
+# ISO 4017 / ISO 261 の参考値（規格で要確認）。ここにない寸法は、bolt / nut の引数で直接指定する
+METRIC = {
+    "M3":  {"d": 0.003, "s": 0.0055, "m": 0.0024, "k": 0.002,  "pitch": 0.0005},
+    "M4":  {"d": 0.004, "s": 0.007,  "m": 0.0032, "k": 0.0028, "pitch": 0.0007},
+    "M5":  {"d": 0.005, "s": 0.008,  "m": 0.0047, "k": 0.0035, "pitch": 0.0008},
+    "M6":  {"d": 0.006, "s": 0.010,  "m": 0.0052, "k": 0.004,  "pitch": 0.001},
+    "M8":  {"d": 0.008, "s": 0.013,  "m": 0.0068, "k": 0.0053, "pitch": 0.00125},
+    "M10": {"d": 0.010, "s": 0.016,  "m": 0.0084, "k": 0.0064, "pitch": 0.0015},
+    "M12": {"d": 0.012, "s": 0.018,  "m": 0.0108, "k": 0.0075, "pitch": 0.00175},
+}
+
+
+def _spec(size, **over):
+    if isinstance(size, str):
+        if size.upper() not in METRIC:
+            raise ValueError(f"{size} の寸法表がありません（{', '.join(METRIC)}）。d=, s=, m=, k= を数値で指定してください")
+        sp = dict(METRIC[size.upper()])
+    else:  # 直径を数値で渡したときは、おおよその比率で決める
+        d = float(size)
+        sp = {"d": d, "s": 1.6 * d, "m": 0.85 * d, "k": 0.65 * d, "pitch": 0.15 * d}
+    sp.update({k: v for k, v in over.items() if v is not None})
+    return sp
+
+
+def polygon(n: int, r: float, start: float = 0.0, per_edge: int = 1):
+    """正 n 角形の頂点 [(x, y), ...]（r は外接円の半径、反時計回り）。per_edge で各辺を分割する"""
+    corners = [(r * math.cos(start + 2 * math.pi * i / n), r * math.sin(start + 2 * math.pi * i / n)) for i in range(n)]
+    out = []
+    for i in range(n):
+        (x0, y0), (x1, y1) = corners[i], corners[(i + 1) % n]
+        out += [(x0 + (x1 - x0) * k / per_edge, y0 + (y1 - y0) * k / per_edge) for k in range(per_edge)]
+    return out
+
+
+def helix(r: float, pitch: float, turns: float, per_turn: int = 16, z0: float = 0.0):
+    """らせんの点 [(x, y, z), ...]（Z 軸まわり）。qm.tube と組み合わせて、ばね・コイル・ねじの山に"""
+    n = max(2, int(round(turns * per_turn)))
+    return [(r * math.cos(2 * math.pi * t / per_turn), r * math.sin(2 * math.pi * t / per_turn), z0 + pitch * t / per_turn)
+            for t in range(n + 1)]
+
+
+def _annulus(bm, outer, inner, z0: float, z1: float):
+    """同じ点数の外側・内側の輪（2D）で、穴のあいた立体（上下・外壁・内壁）を四角形で作る"""
+    O0 = [bm.verts.new((x, y, z0)) for x, y in outer]
+    O1 = [bm.verts.new((x, y, z1)) for x, y in outer]
+    I0 = [bm.verts.new((x, y, z0)) for x, y in inner]
+    I1 = [bm.verts.new((x, y, z1)) for x, y in inner]
+    n = len(outer)
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new((O0[i], O0[j], O1[j], O1[i]))   # 外壁
+        bm.faces.new((I0[j], I0[i], I1[i], I1[j]))   # 内壁
+        bm.faces.new((O1[i], O1[j], I1[j], I1[i]))   # 上
+        bm.faces.new((O0[j], O0[i], I0[i], I0[j]))   # 下
+
+
+def _place(objects, location=(0, 0, 0), rotate=None):
+    """原点を基準に回してから location へ動かす（rotate は度）"""
+    objects = objects if isinstance(objects, (list, tuple)) else [objects]
+    if rotate:
+        pivot(objects, (0, 0, 0), rotate)
+    bpy.context.view_layer.update()
+    for ob in objects:
+        ob.matrix_world = Matrix.Translation(Vector(location)) @ ob.matrix_world
+    return objects
+
+
+def ring(name: str, r_out: float, r_in: float, h: float, seg: int = 16, origin: str = "bottom", material=None,
+         location=(0, 0, 0), rotate=None):
+    """穴のあいた円柱（カラー・座金・管の一部・リム）。Z 方向に高さ h。rotate（度）で向きを変える"""
+    bm = bmesh.new()
+    z0 = _origin_shift(origin, h)
+    _annulus(bm, circle(seg, r_out), circle(seg, r_in), z0, z0 + h)
+    ob = obj(name, bm, material)
+    return _place(ob, location, rotate)[0]
+
+
+def nut(name: str, size="M8", s=None, m=None, material=None, location=(0, 0, 0), rotate=None):
+    """六角ナット（ISO 4032 の寸法。size は "M3"〜"M12" か直径の数値）。底面の中心が原点、穴は Z 方向"""
+    sp = _spec(size, s=s, m=m)
+    R = sp["s"] / 2 / math.cos(math.pi / 6)
+    bm = bmesh.new()
+    _annulus(bm, polygon(6, R, per_edge=2), circle(12, sp["d"] / 2), 0.0, sp["m"])
+    return _place(obj(name, bm, material), location, rotate)[0]
+
+
+def washer(name: str, size="M8", material=None, location=(0, 0, 0), rotate=None):
+    """平座金（寸法はおおよそ。内径 ≒ 1.08d、外径 ≒ 2d、厚み ≒ 0.18d）"""
+    d = _spec(size)["d"]
+    return ring(name, d, d * 0.54, d * 0.18, seg=16, material=material, location=location, rotate=rotate)
+
+
+def bolt(name: str, size="M8", length: float = 0.03, thread: bool = False, s=None, k=None, material=None,
+         location=(0, 0, 0), rotate=None):
+    """六角ボルト（頭は上、軸は -Z へ length）。原点は頭の座面の中心。thread=True でねじ山の見た目を付ける。
+    寸法は size（"M3"〜"M12" か直径の数値）から。向きは rotate（度）で変える"""
+    sp = _spec(size, s=s, k=k)
+    d, R = sp["d"], sp["s"] / 2 / math.cos(math.pi / 6)
+    bm = bmesh.new()
+    hex_pts, circ = polygon(6, R, per_edge=2), circle(12, d / 2)
+    top = [bm.verts.new((x, y, sp["k"])) for x, y in hex_pts]
+    bot = [bm.verts.new((x, y, 0.0)) for x, y in hex_pts]
+    rings = [[bm.verts.new((x, y, 0.0)) for x, y in circ]]
+    if thread:
+        p = sp["pitch"]
+        steps = max(2, int(length / (p / 2)))
+        for t in range(1, steps + 1):
+            z = -length * t / steps
+            rr = d / 2 * (1.0 if t % 2 == 0 else 0.9)
+            if t == steps:
+                rr = d / 2 * 0.85  # 先端の面取り
+            rings.append([bm.verts.new((x * rr / (d / 2), y * rr / (d / 2), z)) for x, y in circ])
+    else:
+        rings.append([bm.verts.new((x * 0.9, y * 0.9, -length)) for x, y in circ])
+        rings.insert(1, [bm.verts.new((x, y, -length + d * 0.1)) for x, y in circ])
+    for i in range(12):
+        j = (i + 1) % 12
+        bm.faces.new((bot[i], bot[j], top[j], top[i]))                  # 頭の側面
+        bm.faces.new((bot[j], bot[i], rings[0][i], rings[0][j]))        # 頭の座面
+        for A, B in zip(rings, rings[1:]):
+            bm.faces.new((A[j], A[i], B[i], B[j]))                      # 軸
+    cap_grid(bm, top)
+    cap_grid(bm, rings[-1])
+    return _place(obj(name, bm, material), location, rotate)[0]
+
+
+def gear(name: str, teeth: int = 20, module: float = 0.002, width: float = 0.01, bore=None, material=None,
+         location=(0, 0, 0), rotate=None):
+    """平歯車（歯は台形で近似）。基準円の直径 = module × teeth、歯先 +module、歯底 -1.25×module。
+    bore は軸穴の半径（省略時は歯底の円の 3 割）。Z 方向に厚み width、底面が原点"""
+    rp = module * teeth / 2
+    ra, rf = rp + module, rp - 1.25 * module
+    rb = bore if bore is not None else rf * 0.3
+    a = 2 * math.pi / teeth
+    outer, inner = [], []
+    for i in range(teeth):
+        c = i * a
+        for frac, rr in ((-0.25, rf), (-0.12, ra), (0.12, ra), (0.25, rf)):
+            ang = c + frac * a
+            outer.append((rr * math.cos(ang), rr * math.sin(ang)))
+            inner.append((rb * math.cos(ang), rb * math.sin(ang)))
+    bm = bmesh.new()
+    _annulus(bm, outer, inner, 0.0, width)
+    return _place(obj(name, bm, material), location, rotate)[0]
+
+
+def flange(name: str, r_in: float, r_out: float, thickness: float, bolts: int = 4, bolt_size="M8",
+           material=None, bolt_material=None, location=(0, 0, 0), rotate=None):
+    """フランジ（穴あきの円盤）と、上面の円周に並べたボルト。戻り値は [フランジ, ボルト...]"""
+    seg = max(16, bolts * 4)
+    fl = ring(name, r_out, r_in, thickness, seg=seg, material=material)
+    rc = (r_in + r_out) / 2
+    parts = [fl]
+    for i in range(bolts):
+        ang = 2 * math.pi * (i + 0.5) / bolts
+        parts.append(bolt(f"{name}_Bolt_{i + 1}", bolt_size, length=thickness, material=bolt_material or material,
+                          location=(rc * math.cos(ang), rc * math.sin(ang), thickness)))
+    return _place(parts, location, rotate)
+
+
+def wheel(name: str, radius: float = 0.33, width: float = 0.22, rim_radius=None, spokes: int = 5,
+          tire_material=None, rim_material=None, location=(0, 0, 0), rotate=None):
+    """車輪（タイヤ・リム・ハブ・スポーク）。軸は Z、中心が原点。車に付けるなら rotate=(90, 0, 0) で軸を Y に。
+    戻り値は [タイヤ, リム, ハブ, スポーク...]"""
+    rr = rim_radius or radius * 0.62
+    hw, c = width / 2, min(width, radius - rr) * 0.25
+    prof = [(rr, -hw * 0.9), (radius - c, -hw), (radius, -hw + c), (radius, hw - c), (radius - c, hw), (rr, hw * 0.9)]
+    # 断面の各辺を分けて、なめらかに
+    dense = []
+    for i in range(len(prof)):
+        (r0, z0), (r1, z1) = prof[i], prof[(i + 1) % len(prof)]
+        dense += [(r0 + (r1 - r0) * t / 2, z0 + (z1 - z0) * t / 2) for t in range(2)]
+    tire = lathe(f"{name}_Tire", dense, seg=32, closed=True, material=tire_material)
+    rim = ring(f"{name}_Rim", rr, rr * 0.9, width * 0.85, seg=32, origin="center", material=rim_material)
+    hub = cylinder(f"{name}_Hub", rr * 0.28, width * 0.5, seg=16, origin="center", material=rim_material)
+    parts = [tire, rim, hub]
+    if spokes:
+        sp = box(f"{name}_Spoke_1", (rr * 0.66, rr * 0.16, width * 0.18), origin="center",
+                 location=(rr * 0.28 + rr * 0.31, 0, 0), material=rim_material)
+        parts += radial(sp, spokes)
+    return _place(parts, location, rotate)
+
+
 # ---------------------------------------------------------------- 配置と仕上げ
 
 def pivot(objects, point, rotate=(0, 0, 0)):
@@ -304,6 +495,46 @@ def copy(ob, name: str, location=None, rotate=None, scale=None):
         new.rotation_euler = [math.radians(a) for a in rotate]
     if scale is not None:
         new.scale = scale
+    return new
+
+
+def array(ob, count: int, offset, name: str | None = None):
+    """直線に並べて複製する（ob を含めて count 個）。offset は 1 個ごとのずれ (dx, dy, dz)。戻り値は全部のリスト"""
+    out = [ob]
+    base = Vector(ob.location)
+    label = re.sub(r"_1$", "", name or ob.name)
+    for k in range(1, count):
+        out.append(copy(ob, f"{label}_{k + 1}", location=tuple(base + Vector(offset) * k)))
+    return out
+
+
+def radial(ob, count: int, center=(0, 0, 0), axis: str = "Z", name: str | None = None):
+    """center を通る軸のまわりに、等間隔に並べて複製する（ob を含めて count 個）。スポーク・ボルト円・花びらなどに"""
+    base = re.sub(r"_1$", "", name or ob.name)
+    out = [ob]
+    for k in range(1, count):
+        c = copy(ob, f"{base}_{k + 1}")
+        rot = [0, 0, 0]
+        rot["XYZ".index(axis.upper())] = 360 * k / count
+        pivot(c, center, rot)
+        out.append(c)
+    return out
+
+
+def mirror(ob, axis: str = "X", about: float = 0.0, name: str | None = None):
+    """左右反転した複製を作る（axis 方向に、座標 about の面で反転）。形はメッシュに焼き込み、面の向きも直す"""
+    bpy.context.view_layer.update()
+    new = copy(ob, name or (ob.name[:-2] + "_R" if ob.name.endswith("_L") else ob.name + "_Mirror"))
+    me = new.data
+    me.transform(ob.matrix_world)
+    new.matrix_world = Matrix.Identity(4)
+    i = "XYZ".index(axis.upper())
+    flip = Matrix.Identity(4)
+    flip[i][i] = -1
+    me.transform(Matrix.Translation(Vector([about if k == i else 0 for k in range(3)])) @ flip
+                 @ Matrix.Translation(Vector([-about if k == i else 0 for k in range(3)])))
+    me.flip_normals()
+    me.update()
     return new
 
 
@@ -352,11 +583,23 @@ HELP = """qm（四角ポリゴン主体のモデリング用の関数。run_scri
 - qm.quad_sphere(name, size=直径 または (X,Y,Z), n=4, origin="center"|"bottom")   四角形だけの球・楕円体
 - qm.cap_grid(bm, [BMVert の輪])   自分で組んだ bmesh の穴を四角形の格子でふさぐ（頂点数は偶数に）
 - qm.obj(name, bm, material)   自分で組んだ bmesh をオブジェクトにする（法線もそろえる）
-- 点の補助: qm.circle(n, r) → [(x,y)...]、qm.arc(r, 開始角, 終了角, 分割数) → [(x,y)...]（度）
+- 点の補助: qm.circle(n, r) → [(x,y)...]、qm.arc(r, 開始角, 終了角, 分割数) → [(x,y)...]（度）、
+    qm.polygon(n, r, per_edge=1) 正多角形、qm.helix(r, pitch, turns) らせん（qm.tube と組んでばね・コイル）
+
+部品（寸法付き。どれも四角形だけの閉じた立体。rotate=(rx,ry,rz) 度で向きを変える）
+- qm.bolt(name, "M8", length=0.03, thread=False)   六角ボルト。原点は頭の座面、軸は -Z へ。"M3"〜"M12"、または直径の数値
+- qm.nut(name, "M8") / qm.washer(name, "M8")   六角ナット（ISO 4032 の寸法） / 平座金（おおよその寸法）
+- qm.ring(name, r_out, r_in, h, seg=16)   穴のあいた円柱（カラー・管の一部・リム）
+- qm.gear(name, teeth=20, module=0.002, width=0.01, bore=None)   平歯車（基準円の直径 = module × teeth）
+- qm.flange(name, r_in, r_out, thickness, bolts=4, bolt_size="M8")   フランジとボルト → [フランジ, ボルト...]
+- qm.wheel(name, radius=0.33, width=0.22, spokes=5, rotate=(90,0,0))   タイヤ・リム・ハブ・スポーク → リスト
+- qm.lathe(..., closed=True)   断面を閉じた輪として回す（タイヤ・Oリング・ドーナツ）
 
 置く・仕上げる
 - qm.pivot(objs, point=(x,y,z), rotate=(rx,ry,rz))   point を軸に回す（蝶番のふた・傾けた脚。度）
 - qm.copy(ob, name, location=, rotate=, scale=)   複製（左右の脚など）
+- qm.array(ob, count, offset=(dx,dy,dz))   直線に並べる / qm.radial(ob, count, center=, axis="Z")   円周に並べる
+- qm.mirror(ob, axis="X", about=0.0)   反転した複製（左右対称の部品。名前が _L なら _R になる）
 - qm.bevel(ob, width, segments=2) / qm.subsurf(ob, levels=1) / qm.solidify(ob, thickness)
 - qm.material(name, color=(r,g,b), metal=, rough=, tile=画像1枚のメートル, alpha=)
 

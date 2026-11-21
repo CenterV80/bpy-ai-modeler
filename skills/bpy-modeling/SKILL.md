@@ -36,6 +36,12 @@ bpy-modeler は、Blender（GUI なし）でスクリプトを実行し、トポ
 | 開いたふた・扉・傾けた部品 | `qm.pivot` | 軸の点は「回る辺の上の点」。ふたなら奥の上の辺 |
 | 左右対称の部品 | `qm.copy` | location / rotate を変えて複製する |
 | なめらかな曲面（クッション・車体） | `qm.box(segs=...)` ＋ `qm.subsurf` | 角を残したい所の近くに分割（サポートエッジ）を入れる |
+| ボルト・ナット・座金 | `qm.bolt` / `qm.nut` / `qm.washer` | サイズは "M3"〜"M12"。ボルトの原点は頭の座面。見せたいときだけ `thread=True`（面が多い） |
+| 歯車 | `qm.gear` | かみ合わせるなら同じ module にし、中心距離 = module ×（歯数1 + 歯数2）÷ 2 |
+| フランジ・管の継ぎ目 | `qm.flange` ＋ `qm.ring` / `qm.tube` | ボルトは自動で円周に並ぶ |
+| 車輪 | `qm.wheel(rotate=(90,0,0))` | 車なら軸を Y に。地面に接するよう中心の高さ = 半径 |
+| ばね・コイル | `qm.helix` ＋ `qm.tube` | 線の太さは半径の 1〜2 割 |
+| 同じ部品を並べる | `qm.array` / `qm.radial` / `qm.mirror` | 柵の柱・スポーク・ボルト円・左右の脚 |
 
 ## 寸法の目安（メートル）
 
@@ -89,3 +95,4 @@ bpy-modeler は、Blender（GUI なし）でスクリプトを実行し、トポ
 - `treasure_chest.py`：qm だけで作った宝箱（box / loft / sweep / quad_sphere / pivot / expect）
 - `stool.py`：回転体の座面と先細りの脚（lathe / tube / cylinder）
 - `office_building.py`：bmesh で組んだ 8 階建てのビル（inset で窓、腰壁、パラペット、マテリアルの割り当て）
+- `mechanical_parts.py`：ボルト・ナット・座金・歯車・フランジ・ばね・車輪（部品の関数の使い方）
