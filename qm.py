@@ -16,7 +16,7 @@ from mathutils import Matrix, Vector
 
 __all__ = ["material", "obj", "box", "cylinder", "lathe", "loft", "sweep", "tube", "quad_sphere", "cap_grid",
            "circle", "arc", "polygon", "helix", "airfoil", "ring", "nut", "washer", "bolt", "gear", "flange", "wheel",
-           "pivot", "copy", "array", "radial", "mirror", "bevel", "subsurf", "solidify", "expect", "METRIC", "HELP"]
+           "pivot", "orient", "copy", "array", "radial", "mirror", "bevel", "subsurf", "solidify", "expect", "METRIC", "HELP"]
 
 
 # ---------------------------------------------------------------- マテリアルとオブジェクト
@@ -501,6 +501,25 @@ def pivot(objects, point, rotate=(0, 0, 0)):
     return objects
 
 
+def orient(objects, origin=(0, 0, 0), x_axis=(1, 0, 0), z_axis=(0, 0, 1)):
+    """原点に作った部品を、origin へ動かし、部品の X 軸を x_axis、Z 軸を z_axis の向きにする。
+    （z_axis は x_axis に直交するよう自動で直す。棒・ダンパー・ロッドエンドを 2 点の間に据えるときに）"""
+    objects = objects if isinstance(objects, (list, tuple)) else [objects]
+    x = Vector(x_axis).normalized()
+    z = Vector(z_axis)
+    z = (z - x * z.dot(x))
+    if z.length < 1e-9:
+        z = x.orthogonal()
+    z.normalize()
+    y = z.cross(x)
+    m = Matrix(((x.x, y.x, z.x, 0), (x.y, y.y, z.y, 0), (x.z, y.z, z.z, 0), (0, 0, 0, 1)))
+    m = Matrix.Translation(Vector(origin)) @ m
+    bpy.context.view_layer.update()
+    for ob in objects:
+        ob.matrix_world = m @ ob.matrix_world
+    return objects
+
+
 def copy(ob, name: str, location=None, rotate=None, scale=None):
     """オブジェクトを複製する（メッシュも別に持つ）。rotate は度"""
     new = ob.copy()
@@ -616,6 +635,7 @@ HELP = """qm（四角ポリゴン主体のモデリング用の関数。run_scri
 
 置く・仕上げる
 - qm.pivot(objs, point=(x,y,z), rotate=(rx,ry,rz))   point を軸に回す（蝶番のふた・傾けた脚。度）
+- qm.orient(objs, origin, x_axis, z_axis)   原点に作った部品を、origin に、X 軸・Z 軸を指定の向きにして据える
 - qm.copy(ob, name, location=, rotate=, scale=)   複製（左右の脚など）
 - qm.array(ob, count, offset=(dx,dy,dz))   直線に並べる / qm.radial(ob, count, center=, axis="Z")   円周に並べる
 - qm.mirror(ob, axis="X", about=0.0)   反転した複製（左右対称の部品。名前が _L なら _R になる）

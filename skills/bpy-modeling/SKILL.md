@@ -44,6 +44,7 @@ bpy-modeler は、Blender（GUI なし）でスクリプトを実行し、トポ
 | 同じ部品を並べる | `qm.array` / `qm.radial` / `qm.mirror` | 柵の柱・スポーク・ボルト円・左右の脚 |
 | 翼・羽根・プロペラ | `qm.airfoil` ＋ `qm.loft`（F1 なら `f1.wing_element`） | 断面は NACA。下向きの力が欲しいなら camber を負に |
 | F1・フォーミュラカー | `f1.car()` か `f1` の部品の関数 | 先に `f1_help` を読む。寸法は `f1.SPEC` / `f1.EST`、前は -Y |
+| サスペンション・ブレーキの機構 | `f1.wishbone` / `f1.pushrod` / `f1.rocker` / `f1.damper` / `f1.upright` / `f1.brake_disc` / `f1.caliper` | 先に取り付け点（ピボット・ボールジョイント）の座標を決め、部品はその点の間に作る。原点で作る部品は `qm.orient` で据える |
 
 ## 寸法の目安（メートル）
 
@@ -105,3 +106,4 @@ bpy-modeler は、Blender（GUI なし）でスクリプトを実行し、トポ
 - `office_building.py`：bmesh で組んだ 8 階建てのビル（inset で窓、腰壁、パラペット、マテリアルの割り当て）
 - `mechanical_parts.py`：ボルト・ナット・座金・歯車・フランジ・ばね・車輪（部品の関数の使い方）
 - `f1_car.py`：f1.car で組み立てた 2026 年規定の F1 マシン（71 部品）
+- `f1_front_corner.py`：モノコックと左前の足まわり（A アーム・プッシュロッド・ロッカー・ダンパー・ステアリング・アップライト・ブレーキ・ハブ・ホイール）
