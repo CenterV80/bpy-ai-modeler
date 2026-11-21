@@ -106,11 +106,11 @@ f1.fuel_cell("FuelCell", y0=FC0 * MM, y1=FC1 * MM, half_w=0.32, z0=0.179, z1=0.6
 f1.control_electronics("CE", center=(0.16, 2.33, 0.073), size=(0.18, 0.14, 0.16), mats=mats)
 f1.oil_tank("OilTank", 2.25, 2.49, 0.14, 0.30, 0.60, mats=mats)          # 燃料タンクとエンジンの間（隔壁の手前まで）
 # オイルフィルター（オイルタンクの左の横に。缶と中のエレメント）
-ofc = qm.cylinder("Engine_OilFilter", 0.030, 0.040, seg=32, axis="X", location=(-0.160, 2.37, 0.45), material=titan)
-qm.cut(ofc, [qm.cylinder("_ofi", 0.0275, 0.040, seg=32, axis="X", location=(-0.162, 2.37, 0.45))])
-ofe = qm.cylinder("Engine_OilFilter_Element", 0.025, 0.032, seg=32, axis="X", location=(-0.160, 2.37, 0.45),
+ofc = qm.cylinder("Engine_OilFilter", 0.030, 0.040, seg=32, axis="X", location=(0.160, 2.37, 0.45), material=titan)
+qm.cut(ofc, [qm.cylinder("_ofi", 0.0275, 0.040, seg=32, axis="X", location=(0.162, 2.37, 0.45))])
+ofe = qm.cylinder("Engine_OilFilter_Element", 0.025, 0.032, seg=32, axis="X", location=(0.160, 2.37, 0.45),
                   material=qm.material("F1_FilterPaper", (0.85, 0.80, 0.55), metal=0.0, rough=0.9))
-qm.cut(ofe, [qm.cylinder("_ofc", 0.010, 0.036, seg=24, axis="X", location=(-0.160, 2.37, 0.45))])
+qm.cut(ofe, [qm.cylinder("_ofc", 0.010, 0.036, seg=24, axis="X", location=(0.160, 2.37, 0.45))])
 
 # =========================================================== パワーユニット
 f1.v6_engine_real(30, mats=mats)        # ブロック・ベッドプレート・ヘッド・ガスケット・カバー・オイルパン・クランク・コンロッド・ピストン・バルブ・カム・ポンプ
@@ -131,11 +131,12 @@ f1.airbox("Airbox", mats=mats)
 qm.orient(qm.ring("AirInlet_Flange", 0.058, 0.044, 0.010, seg=20, origin="center", material=titan), origin=P(0, 2702, 750),
           x_axis=(1, 0, 0), z_axis=(0, -1, 0.3))
 
-# MGU-K（クランクの前のギアからかみ合う。位置は推定）
+# MGU-K：サバイバルセルの中（燃料タンクの後ろ、左下）に置き、隔壁を通る軸のギアで、クランクの前のギアから回す。
+# 2026 年は MGU-K をサバイバルセルの中に置くという報道がある（規定の本文は確かめられなかった）。クランクが低いので、エンジンの横の下には置けない
 steel_k = qm.material("F1_Steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
-MG = P(-205, 0, 202)
-MG.y = (YF + 12 + 199) * MM
-qm.orient(f1.mgu_k("MGUK", mats=mats), origin=MG, x_axis=(1, 0, 0), z_axis=(0, 1, 0))
+MG = P(-190, 0, CZ + 95)
+MG.y = (YF + 12 - 199) * MM                            # ギア（MGU-K の前の端）がクランクのギアと同じ面に来るように
+qm.orient(f1.mgu_k("MGUK", mats=mats), origin=MG, x_axis=(1, 0, 0), z_axis=(0, -1, 0))
 # クランクのギア（60 歯）と MGU-K のギア（40 歯）の間にアイドラー（38 歯）。モジュール 2.5、中心はかみ合う距離の円の交点
 rC, rI, rM = 2.5 * 60 / 2, 2.5 * 38 / 2, 2.5 * 40 / 2
 C2, M2 = Vector((0, CZ)), Vector((MG.x / MM, MG.z / MM))
@@ -172,7 +173,7 @@ for s, tg in ((-1, "L"), (1, "R")):
     route(f"WaterPipeHot{tg}", [out * MM, P(out.x + s * 30, YF + 20, out.z + 40), P(s * 330, YF + 15, 600), P(s * 480, 2150, 640), r_in + Vector((0, 0, 0.03)), r_in - Vector((0, 0, 0.012))],
             r=0.019, kind="water", mats=mats)
     route(f"WaterPipeCold{tg}", [r_out + Vector((0, 0, 0.012)), r_out - Vector((0, 0, 0.03)), r_out - Vector((s * 0.03, 0.03, 0.05)), P(s * 390, 1440, 70), P(s * 390, 2430, 110), P(s * 390, YF + 220, 140),
-                                   P(s * 250, wp.y - 10, 240), wp * MM + wpo * 0.012, wp * MM - wpo * 0.010], r=0.019, kind="water", mats=mats)
+                                   P(s * 250, wp.y - 10, wp.z - 60), wp * MM + wpo * 0.012, wp * MM - wpo * 0.010], r=0.019, kind="water", mats=mats)
 
 ic_in, ic_out = cooler("Intercooler", 1, (505, 2110, 345), 220, 360, thick=60)
 th_y = min(y for _, _, y in f1.v6_cylinders()) - 55 - 40
@@ -188,7 +189,7 @@ route("OilLineReturn", [oc_out + Vector((0, 0, 0.012)), oc_out - Vector((0, 0, 0
 
 # 燃料・高電圧の配線
 route("FuelLine", [P(250, 2200, 560), P(250, 2470, 590), P(60, YF + 25, 520), P(0, YF + 50, CZ + 200)], r=0.008, kind="fuel", mats=mats)
-route("HVCableK", [P(-168, 2255, 123), P(-250, 2440, 130), P(-320, 2600, 190), MG + Vector((-0.098, -0.080, 0))], r=0.011, kind="hv", mats=mats)
+route("HVCableK", [P(-168, 2255, 123), P(-250, 2330, 150), P(-310, MG.y / MM + 80, MG.z / MM), MG + Vector((-0.098, 0.080, 0))], r=0.011, kind="hv", mats=mats)
 route("HVCableCE", [P(168, 2255, 123), P(110, 2300, 150), P(66, 2330, 153)], r=0.011, kind="hv", mats=mats)
 
 # =========================================================== 前の足まわり（左右）
@@ -273,7 +274,8 @@ f1.anti_roll_bar("AntiRollBar", P(0, 3240, 515), 110 * MM, mats=mats)
 
 # =========================================================== ギアボックスの中身（f1_gearbox_internals_mm.py と同じ配置）
 AXLE_Z = 355.0
-IN_Z, OUT_Z = AXLE_Z - 85.0, AXLE_Z                  # 入力軸の高さ = クランク軸の高さ（270）
+IN_Z, OUT_Z = AXLE_Z - 85.0, AXLE_Z                  # 入力軸 270・出力軸 355（デフは車軸の高さ）
+CLUTCH_Z = CZ                                        # クラッチはクランクの高さ（基準面の 90mm 上）。段差のギアで入力軸へ上げる（推定）
 Mg, GW = 2.5, 13.0
 PAIRS = [(20, 48), (22, 46), (24, 44), (26, 42), (28, 40), (30, 38), (32, 36), (34, 34)]
 steel = qm.material("F1_Steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
@@ -282,11 +284,15 @@ gear_mat = qm.material("F1_GearSteel", (0.70, 0.66, 0.58), metal=0.95, rough=0.2
 def place(parts, y, z, x=0.0):
     return qm.orient(parts, origin=P(x, y, z), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
 
-place(f1.clutch("Clutch", d=100 * MM, mats=mats), 2905, IN_Z)
-# クラッチを切る、入力軸のまわりの油圧のシリンダー（コンセントリック・スレーブシリンダー）とレリーズベアリング
-place(qm.ring("ClutchSlave", 34 * MM, 20 * MM, 7 * MM, seg=32, material=mats["titanium"]), 2944, IN_Z)
-place(qm.ring("ClutchSlave_ReleaseBearing", 28 * MM, 18 * MM, 3 * MM, seg=32, material=steel), 2941, IN_Z)
-place(qm.lathe("InputShaft", [(16 * MM, 0), (16 * MM, 385 * MM)], seg=16, material=steel), 2915, IN_Z)
+place(f1.clutch("Clutch", d=100 * MM, mats=mats), 2905, CLUTCH_Z)
+# クラッチを切る、クラッチの軸のまわりの油圧のシリンダー（コンセントリック・スレーブシリンダー）とレリーズベアリング
+place(qm.ring("ClutchSlave", 34 * MM, 20 * MM, 4 * MM, seg=32, material=mats["titanium"]), 2943.5, CLUTCH_Z)
+place(qm.ring("ClutchSlave_ReleaseBearing", 28 * MM, 18 * MM, 2.5 * MM, seg=32, material=steel), 2941, CLUTCH_Z)
+# クラッチの軸と、入力軸へ上げる段差のギア（58 歯 × 2、モジュール 2.5、軸間 145mm）。この仕組みは公表されていないので推定
+place(qm.lathe("ClutchShaft", [(16 * MM, 0), (16 * MM, 90 * MM)], seg=16, material=steel), 2900, CLUTCH_Z)
+place(qm.gear("DropGear_Clutch", 58, 2.5 * MM, GW * MM, bore=16 * MM, material=gear_mat), 2948, CLUTCH_Z)
+place(qm.gear("DropGear_Input", 58, 2.5 * MM, GW * MM, bore=16 * MM, material=gear_mat), 2948, IN_Z)
+place(qm.lathe("InputShaft", [(16 * MM, 0), (16 * MM, 354 * MM)], seg=16, material=steel), 2946, IN_Z)
 place(qm.lathe("OutputShaft", [(18 * MM, 0), (18 * MM, 335 * MM)], seg=16, material=steel), 2975, OUT_Z)
 Y0, BLOCK = 2995.0, 56.0
 hub_ys = []
@@ -308,7 +314,7 @@ for b, y in enumerate(hub_ys):
 qm.cylinder("SelectorRail", 0.005, (3253 - 2989) * MM, seg=16, axis="Y", location=tuple(P(44, (2989 + 3253) / 2, OUT_Z)), material=steel)
 place(qm.gear("ReverseIdler", 18, Mg * MM, GW * MM, bore=8 * MM, material=gear_mat), 3222, (IN_Z + OUT_Z) / 2, 58)
 place(qm.lathe("ReverseIdlerShaft", [(8 * MM, 0), (8 * MM, 30 * MM)], seg=12, material=steel), 3214, (IN_Z + OUT_Z) / 2, 58)
-for nm, y, z, di, do, w in (("Brg_InFront", 2958, IN_Z, 32, 62, 14), ("Brg_InRear", 3288, IN_Z, 32, 62, 14),
+for nm, y, z, di, do, w in (("Brg_InFront", 2975, IN_Z, 32, 62, 14), ("Brg_InRear", 3288, IN_Z, 32, 62, 14), ("Brg_ClutchShaft", 2975, CLUTCH_Z, 32, 62, 14),
                             ("Brg_OutFront", 2982, OUT_Z, 36, 72, 14), ("Brg_OutRear", 3260, OUT_Z, 36, 72, 14)):
     place(qm.ball_bearing(nm, di * MM, do * MM, w * MM, balls=10, material=steel), y, z)
 FD_M, ZP, ZC = 5.0, 12, 36
@@ -356,8 +362,8 @@ EZ = 0.065 + 0.008 + 0.05
 route("ExtLine_Cockpit", [P(0, 1320, EZ / MM), P(40, 1345, 100), P(150, 1200, 90), P(150, 700, 100), P(150, 660, 108)], r=0.004, kind="extinguisher", mats=mats)
 f1.nozzle("ExtNozzle_Cockpit", P(150, 660, 108), (0, -1, 0.3), mats=mats)
 route("ExtLine_Engine", [P(0, 1320, EZ / MM), P(-40, 1345, 100), P(-230, 1400, 90), P(-300, 1900, 90), P(-300, 2300, 90),
-                           P(-250, 2470, 200), P(-215, YF + 25, 245)], r=0.004, kind="extinguisher", mats=mats)
-f1.nozzle("ExtNozzle_Engine", P(-215, YF + 25, 245), (0.3, 1, 0.3), mats=mats)
+                           P(-300, 2490, 120), P(-215, YF + 25, 160)], r=0.004, kind="extinguisher", mats=mats)
+f1.nozzle("ExtNozzle_Engine", P(-215, YF + 25, 160), (0.3, 1, 0.3), mats=mats)
 
 # ---- ドリンクの装置、無線、事故データ記録装置
 f1.drink_system("Drink", bag=(0.27, 1.50, 0.073), mats=mats)
@@ -392,13 +398,13 @@ route("GearboxOilLine1", [P(-240, 3247, 330), P(-200, 3262, 345), P(-120, 3262, 
 route("GearboxOilLine2", [P(-240, 3053, 190), P(-200, 3045, 185), P(-120, 3045, 235)], r=0.006, kind="oil", mats=mats)
 
 # ---- 油圧系（エンジンの前のポンプ → アキュムレーター → ギアボックスの横の制御弁 → シフト・クラッチ、パワーステアリング）
-f1.hydraulic_pump("HydPump", P(132, YF + 65, 230), axis=(1, 0, 0), mats=mats)      # エンジンの右の横（前の面は隔壁に付くため）
+f1.hydraulic_pump("HydPump", P(132, YF + 65, CZ + 40), axis=(1, 0, 0), mats=mats)      # エンジンの右の横（前の面は隔壁に付くため）
 f1.accumulator("Accumulator", P(190, 2600, 160), P(190, 2780, 160), mats=mats)
 f1.valve_block("ValveBlock", (-0.19, 3.00, 0.34), mats=mats)
-route("HydLine_Pump", [P(160, YF + 65, 230), P(190, YF + 75, 200), P(190, 2590, 165), P(190, 2596, 160)], r=0.005, kind="hydraulic", mats=mats)
+route("HydLine_Pump", [P(160, YF + 65, CZ + 40), P(195, YF + 75, CZ + 45), P(190, 2590, 165), P(190, 2596, 160)], r=0.005, kind="hydraulic", mats=mats)
 route("HydLine_Supply", [P(190, 2775, 160), P(230, 2860, 120), P(230, 2960, 120), P(-190, 2960, 120), P(-190, 3000, 345)], r=0.005, kind="hydraulic", mats=mats)
 route("HydLine_Shift", [P(-150, 3010, 390), P(-60, 2965, 470), P(40, 2965, 360)], r=0.004, kind="hydraulic", mats=mats)
-route("HydLine_Clutch", [P(-190, 2960, 360), P(-120, 2930, 300), P(-55, 2925, 272)], r=0.004, kind="hydraulic", mats=mats)
+route("HydLine_Clutch", [P(-190, 2960, 360), P(-120, 2930, 250), P(-30, 2945, CLUTCH_Z + 20)], r=0.004, kind="hydraulic", mats=mats)
 route("PowerSteeringLine", [P(-200, 3000, 345), P(-320, 2950, 110), P(-330, 2440, 100), P(-320, 1600, 130), P(-280, 1000, 130),
                               P(-150, 100, 170), P(-60, -110, 300)], r=0.005, kind="hydraulic", mats=mats)
 f1.small_box("PowerSteering_Valve", (0.04, -0.15, 0.255), (0.05, 0.04, 0.045), color=(0.55, 0.56, 0.58), connectors=1, mats=mats)
@@ -418,11 +424,11 @@ route("Loom_Cockpit", [P(-400, 1150, 220), P(-300, 1080, 400), P(-150, 1060, 520
 f1.nose_crash("NoseCrash", y0=-0.35, length=0.62, mats=mats)
 f1.pitot("Pitot", tip=(0, -0.90, 0.33), mats=mats)
 f1.plank("Plank", y0=0.30, y1=3.10, width=0.30, mats=mats)
-for k, (y, z) in enumerate(((0.5, 0.065), (1.2, 0.065), (1.9, 0.065), (2.7, CZ * MM - 0.150), (3.05, 0.145))):
+for k, (y, z) in enumerate(((0.5, 0.065), (1.2, 0.065), (1.9, 0.065), (2.7, (CZ - 78) * MM), (3.05, 0.062))):
     qm.cylinder(f"Plank_Mount{k + 1}", 0.012, z - f1.EST["plank_z"] + 0.004, seg=12, location=(0, y, f1.EST["plank_z"] - 0.002), material=titan)
 for s, tg in ((-1, "L"), (1, "R")):
     f1.ride_height_sensor(f"RideHeight_F{tg}", (s * 0.07, -0.25, 0.066), mats=mats)
-    f1.ride_height_sensor(f"RideHeight_R{tg}", (s * 0.07, 3.15, 0.171), mats=mats)
+    f1.ride_height_sensor(f"RideHeight_R{tg}", (s * 0.07, 3.15, 0.093), mats=mats)
 tpms_m = qm.material("F1_TPMS", (0.85, 0.80, 0.15), metal=0.3, rough=0.4)
 for tg in ("FL", "FR", "RL", "RR"):
     c = CORNER[tg]["mid"]
@@ -437,10 +443,11 @@ f1.gear_cover("Engine_GearCover", [(0, CZ * MM, 0.077), (I2.x * MM, I2.y * MM, 0
 # ---- 主軸受のメタルとオイルフィルターは、f1.v6_engine_real に含まれる
 
 # ---- 戻りの配管（燃料の戻り、オイルのスカベンジ、エンジンへのオイル、デフの油圧）
-route("FuelReturn", [P(70.7, 2610, 482), P(60, YF + 30, 545), P(200, 2470, 605), P(200, 2220, 600)], r=0.006, kind="fuel", mats=mats)
-route("OilLineScavenge", [P(118, 2570, 150), P(150, 2470, 130), P(100, 2430, 330), P(100, 2400, 335)], r=0.008, kind="oil", mats=mats)
-route("OilLineFilter", [P(-140, 2330, 420), P(-160, 2350, 430), P(-160, 2365, 445)], r=0.008, kind="oil", mats=mats)        # タンク → フィルター
-route("OilLineEngine", [P(-180, 2370, 450), P(-200, 2470, 330), P(-128, YF + 20, 250)], r=0.008, kind="oil", mats=mats)       # フィルター → エンジン
+rail_f = f1.v6_point(1, f1.V6["deck"] + 37, 104, [y for b, k_, y in f1.v6_cylinders() if b > 0][0] - 35)
+route("FuelReturn", [rail_f * MM, P(60, YF + 30, CZ + 300), P(200, 2470, 605), P(200, 2220, 600)], r=0.006, kind="fuel", mats=mats)
+route("OilLineScavenge", [P(150, 2575, CZ - 30), P(150, 2470, CZ - 15), P(100, 2430, 330), P(100, 2400, 335)], r=0.008, kind="oil", mats=mats)
+route("OilLineFilter", [P(140, 2330, 420), P(160, 2350, 430), P(160, 2365, 445)], r=0.008, kind="oil", mats=mats)        # タンク → フィルター
+route("OilLineEngine", [P(180, 2370, 450), P(205, 2480, 300), P(128, YF + 20, CZ + 20)], r=0.008, kind="oil", mats=mats)  # フィルター → エンジン
 route("HydLine_Diff", [P(-190, 3020, 360), P(-120, 3300, 400), P(-50, WB, 360)], r=0.004, kind="hydraulic", mats=mats)
 
 # ---- エネルギーストアと制御電子機器の冷却（右の前の小さなクーラー → ES → CE → クーラー）
@@ -457,9 +464,10 @@ route("SensorWire_RHFR", [P(-100, 0, 80), P(0, -150, 76), P(70, -240, 72)], r=0.
 route("SensorWire_Pitot", [P(-400, 1150, 220), P(-300, 1000, 450), P(-150, 0, 460), P(-50, -350, 420), P(0, -800, 340), P(0, -878, 333)],
       r=0.003, kind="wire", mats=mats)
 route("SensorWire_IMU", [P(-400, 1150, 190), P(-300, 1250, 90), P(-250, 1750, 90), P(-20, 1845, 90)], r=0.003, kind="wire", mats=mats)
-route("SensorWire_Rear", [P(-300, 2480, 470), P(-120, 2470, 110), P(-120, 3100, 130), P(-70, 3150, 168)], r=0.003, kind="wire", mats=mats)
-route("SensorWire_RHRR", [P(-120, 3100, 130), P(0, 3120, 150), P(70, 3150, 168)], r=0.003, kind="wire", mats=mats)
-route("SensorWire_Light", [P(0, 3120, 150), P(0, 3550, 200), P(0, 3940, 340), P(0, 3955, 355)], r=0.003, kind="wire", mats=mats)
+route("SensorWire_Rear", [P(-300, 2480, 470), P(-310, 2495, 120), P(-150, 2560, 70), P(-180, 2880, 80), P(-180, 3100, 100), P(-70, 3150, 90)],
+      r=0.003, kind="wire", mats=mats)
+route("SensorWire_RHRR", [P(-180, 3100, 100), P(0, 3120, 70), P(70, 3150, 90)], r=0.003, kind="wire", mats=mats)
+route("SensorWire_Light", [P(0, 3120, 70), P(0, 3560, 170), P(0, 3940, 340), P(0, 3955, 355)], r=0.003, kind="wire", mats=mats)
 
 # ---- テレメトリーのアンテナ、データロガー、レインライト
 f1.antenna("Antenna", base=(0, 0.75, f1.tub_section(750)[1] * MM - 0.002), mats=mats)
@@ -469,9 +477,8 @@ route("Loom_Logger", [P(400, 1150, 220), P(330, 1150, 300), P(150, 1100, 520), P
 f1.rain_light("RainLight", center=(0, 3.962, 0.355), size=(0.07, 0.016, 0.035), mats=mats)
 
 # ---- ボルト（エンジンとギアボックスのフランジ、ノーズの取り付け）
-fz = f1.EST["plank_z"] + 0.03 + 0.06 + 0.18
 k = 0
-for x, z in ([(x, fz + s * 0.16) for x in (-0.18, -0.06, 0.06, 0.18) for s in (-1, 1)] + [(s * 0.18, fz + t * 0.055) for s in (-1, 1) for t in (-1, 1)]):
+for x, z in f1.gearbox_flange_bolts():
     k += 1
     qm.orient(qm.bolt(f"Gearbox_Bolt{k}", "M10", 0.04, material=steel), origin=(x, (YGB + 22) * MM, z), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
 nz = f1.EST["plank_z"] + 0.03 + 0.005 + 0.355 / 2
@@ -486,7 +493,8 @@ qm.expect("Disc_RL", size=(32 * MM, 280 * MM, 280 * MM), tol=0.02)
 # =========================================================== 図鑑
 G1, G2, G3, G4, G5, G6, G7 = "サバイバルセル", "コクピット", "燃料・電気", "パワーユニット", "冷却", "足まわり", "ギアボックス"
 qm.catalog("all", "シャシー全体（車体を除く）", "カウル・ウイング・フロアを外した F1 マシンの中身。前輪の軸から後輪の軸まで 3,400mm（2026 年規定の上限）。"
-           "部品の位置はすべて推定。", parts=[""],
+           "クランクの高さは規定（基準面の 90mm 上）。エンジンはサバイバルセルに直接留める。"
+           "そのほかの部品の位置は推定（ペダルの前後位置・燃料タンクの大きさ・車高を含む）。", parts=[""],
            labels={"Cell": "サバイバルセル", "Engine_": "V6 エンジン", "Gearbox": "ギアボックス", "RadiatorL": "ラジエーター",
                    "Turbo": "ターボ", "Halo": "ヘイロー", "Tyre_FL": "前輪", "Tyre_RL": "後輪"}, group="全体")
 qm.catalog("cell", "サバイバルセル", "ドライバーと燃料タンクを囲むカーボンの殻。コクピットの前後に上ぶた、脚の上にダッシュボードの梁。"
@@ -508,14 +516,16 @@ qm.catalog("steering", "ステアリングコラムとラック", "ホイール�
            labels={"Column_UJoint1": "ユニバーサルジョイント", "Column_Bearing": "コラムの軸受", "Rack_Body": "ラック",
                    "Rack_Pinion": "ピニオン", "TrackRod_FL": "トラックロッド"}, group=G2)
 qm.catalog("pedals", "ペダル", "床に軸のある 2 枚のペダル（左がブレーキ、右がアクセル）。ブレーキは前後 2 本のマスターシリンダーを、"
-           "バランスバーを介して押す。", parts=["PedalBox", "PedalBrake", "PedalThrottle", "Master", "BalanceBar"],
+           "バランスバーを介して押す。前後の位置は推定：規定では足は前輪の軸より後ろ、前の隔壁から 300mm 以上後ろ"
+           "（後者は報道による）だが、実車のペダルの位置は確かめられなかった。", parts=["PedalBox", "PedalBrake", "PedalThrottle", "Master", "BalanceBar"],
            labels={"PedalBrake_Pad": "ブレーキペダル", "PedalThrottle_Pad": "アクセルペダル", "Master1_Body": "マスターシリンダー",
                    "BalanceBar": "バランスバー", "PedalThrottle_Sensor": "位置センサー", "PedalBox_Front": "取り付け板"}, group=G2)
 qm.catalog("extinguisher", "消火器", "脚の下の床に寝かせたボトルから、コクピットの足もとと、エンジンの前のノズルへ配管する。寸法は推定。",
            parts=["Extinguisher", "ExtLine", "ExtNozzle"],
            labels={"Extinguisher_Valve": "弁", "Extinguisher_Strap1": "固定バンド", "Extinguisher": "ボトル", "ExtNozzle_Cockpit": "コクピットのノズル",
                    "ExtNozzle_Engine": "エンジンのノズル"}, group=G2)
-qm.catalog("fuel", "燃料タンク", "ドライバーの背中とエンジンの間にある、ゴム袋の燃料セル。底の集油槽のポンプから、エンジンの高圧ポンプへ送る。",
+qm.catalog("fuel", "燃料タンク", "ドライバーの背中とエンジンの間にある、ゴム袋の燃料セル。底の集油槽のポンプから、エンジンの高圧ポンプへ送る。"
+           "大きさ（約 100L）は推定：タンクの容量そのものの規定はなく、2026 年のレースの燃料の量は資料によって 70kg / 110kg と食い違い、確かめられなかった。",
            parts=["FuelCell", "FuelLine", "FuelCoupling", "FuelFillLine", "FuelReturn"],
            labels={"FuelCell": "燃料セル", "FuelCell_Hatch": "点検ふた", "FuelLine": "燃料の配管", "FuelCoupling": "燃料を入れ・抜く口",
                    "FuelReturn": "戻りの配管"}, group=G3)
@@ -524,9 +534,11 @@ qm.catalog("es", "エネルギーストアと制御電子機器", "リチウム�
            labels={"ES": "エネルギーストア", "ES_CoolingPlate": "冷却板", "CE": "制御電子機器", "HVCableK": "MGU-K への配線",
                    "ESCooler": "ES・CE のクーラー", "ESCoolLine3": "冷却水の管"}, group=G3)
 qm.catalog("engine", "V6 エンジン（外観）", "1.6L・V 型 6 気筒・バンク角 90°。ボア 80mm・ストローク 53mm。吸気は V の内側、排気は外側。"
-           "ブロックはクランクの中心で上下に分かれ、下がベッドプレート。前のカバーにウォーターポンプと燃料の高圧ポンプ。", parts=["Engine_"],
+           "クランクの中心は規定で基準面（プランクの上面）の 90mm 上と低く、クランクの下にオイルパンを置く余地はない（クランク室の底から直接吸う）。"
+           "ブロックはクランクの中心で上下に分かれ、下がベッドプレート。前の面はサバイバルセルの隔壁に直接留め、"
+           "ウォーターポンプはブロックの横、燃料の高圧ポンプは V の谷。", parts=["Engine_"],
            labels={"Engine_HeadL": "シリンダーヘッド", "Engine_CamCoverR": "カムカバー", "Engine_Block": "シリンダーブロック",
-                   "Engine_Bedplate": "ベッドプレート", "Engine_Sump": "オイルパン", "Engine_WaterPumpR": "ウォーターポンプ",
+                   "Engine_Bedplate": "ベッドプレート", "Engine_SumpPickup1": "スカベンジの吸い口", "Engine_WaterPumpR": "ウォーターポンプ",
                    "Engine_CoilR2": "点火コイル", "Engine_ScavengePump": "スカベンジポンプ",
                    "Engine_GearCover": "ギアのカバー", "Engine_OilFilter": "オイルフィルター"}, group=G4)
 qm.catalog("crank", "クランクシャフト・ピストン・コンロッド", "3 本のクランクピンを 120° おきに置き、1 本のピンに左右のコンロッド 2 本。"
@@ -544,8 +556,9 @@ qm.catalog("exhaust", "排気", "左右 3 本ずつの管を集合部でまと�
 qm.catalog("turbo", "ターボチャージャー", "排気でタービンを回し、同じ軸のコンプレッサーで吸気を圧縮する。2026 年は MGU-H がなくなった。",
            parts=["Turbo", "Wastegate"], labels={"Wastegate": "ウェイストゲート", "Turbo_Compressor": "コンプレッサー", "Turbo_Turbine": "タービン", "Turbo_Bearing": "軸受ハウジング",
                                      "Turbo_CompOutlet": "圧縮空気の出口", "Turbo_TurbineInletL": "排気の入口"}, group=G4)
-qm.catalog("mguk", "MGU-K", "減速で電気を回収し、加速で最大 350kW を足すモーター発電機。クランクの前のギアから、アイドラーを介して回る。"
-           "位置・寸法は推定。", parts=["MGUK", "Crank_Gear"],
+qm.catalog("mguk", "MGU-K", "減速で電気を回収し、加速で最大 350kW を足すモーター発電機。サバイバルセルの中（燃料タンクの後ろ）に置き、"
+           "隔壁を通る軸のギアで、クランクの前のギアからアイドラーを介して回る。セルの中に置くのは 2026 年の報道による（規定の本文は未確認）。寸法は推定。",
+           parts=["MGUK", "Crank_Gear"],
            labels={"MGUK": "本体", "MGUK_Gear": "駆動ギア", "MGUK_Idler": "アイドラー", "Crank_Gear": "クランクのギア", "MGUK_HVTerminal": "高電圧の端子"}, group=G4)
 qm.catalog("cooling", "冷却（ラジエーター・インタークーラー・オイルクーラー）", "サイドポッドの中の熱交換器。左右に冷却水のラジエーター、"
            "右にターボの空気を冷やすインタークーラー、左にオイルクーラー。", parts=["Radiator", "Intercooler", "OilCooler", "WaterPipe", "ChargePipe", "OilLine", "CoolerBracket", "HeaderTank"],
@@ -576,9 +589,10 @@ qm.catalog("gearbox", "ギアボックスのケースと後ろの衝撃吸収構
            parts=["Gearbox", "RearCrash", "RainLight"],
            labels={"Gearbox_Flange": "ベルハウジングのフランジ", "Gearbox": "ケース", "RearCrash": "衝撃吸収構造", "GearboxOilCooler": "オイルクーラー", "RainLight": "レインライト",
                    "Gearbox_Bolt1": "フランジのボルト"}, group=G7, view="front-left")
-qm.catalog("clutch", "クラッチ", "カーボンの多板クラッチ。直径およそ 100mm。入力軸のまわりの油圧のシリンダーで切る。", parts=["Clutch"],
+qm.catalog("clutch", "クラッチ", "カーボンの多板クラッチ。直径およそ 100mm。クランクの高さにあり、軸のまわりの油圧のシリンダーで切る。"
+           "段差のギア（推定）で、上の入力軸へ回す。", parts=["Clutch", "DropGear"],
            labels={"Clutch_Basket": "バスケット", "Clutch_Friction1": "摩擦板", "Clutch_PressurePlate": "押し付け板", "Clutch_Hub": "ハブ",
-                   "ClutchSlave": "スレーブシリンダー"}, group=G7)
+                   "ClutchSlave": "スレーブシリンダー", "DropGear_Input": "段差のギア"}, group=G7)
 qm.catalog("gears", "前進 8 段のギア列", "入力軸と出力軸に 8 組の歯車。ドッグハブ 4 個で 1 組ずつ選ぶ。歯数とモジュールは推定。",
            parts=["InputShaft", "OutputShaft", "Gear1_", "Gear2_", "Gear3_", "Gear4_", "Gear5_", "Gear6_", "Gear7_", "Gear8_", "DogHub", "ReverseIdler", "Brg_In", "Brg_Out", "NeedleBrg"],
            labels={"InputShaft": "入力軸", "OutputShaft": "出力軸", "Gear1_": "1 速", "Gear8_": "8 速", "DogHub2": "ドッグハブ", "ReverseIdler": "リバース",
@@ -642,13 +656,13 @@ qm.catalog("sec_engine", "エンジンの断面（左の 2 番シリンダー）
            "ブロックは中の詰まった立体で作っているので、シリンダーの穴は描かれない。",
            parts=["Engine_", "Crank_", "Valve_", "Cam_", "Plug_", "Injector_", "FuelRail_", "Intake_", "Exhaust_Primary", "Exhaust_Flange"],
            labels={"Crank_PistonL2": "ピストン", "Crank_RodL2": "コンロッド", "Valve_L2Ina": "吸気バルブ", "Cam_LEx": "排気のカム",
-                   "Intake_Plenum": "プレナム", "Engine_HeadR": "シリンダーヘッド", "Engine_Sump": "オイルパン"},
+                   "Intake_Plenum": "プレナム", "Engine_HeadR": "シリンダーヘッド", "Engine_Bedplate": "ベッドプレート"},
            group=G9, section=("Y", yL2 * MM))
 qm.catalog("sec_gearbox", "ギアボックスの断面（中心）", "車の中心（X = 0）で縦に切った断面。クラッチから入力軸・出力軸の 8 組の歯車、"
            "かさ歯車でデフへ。ケースは中の詰まった立体で作っているので、切り口の上に中の部品が重なる。",
            parts=["Gearbox", "Clutch", "InputShaft", "OutputShaft", "Gear1_", "Gear2_", "Gear3_", "Gear4_", "Gear5_", "Gear6_", "Gear7_", "Gear8_",
-                  "DogHub", "BevelPinion", "CrownWheel", "Diff", "Brg_", "NeedleBrg", "ClutchSlave"],
-           labels={"Clutch_Basket": "クラッチ", "InputShaft": "入力軸", "OutputShaft": "出力軸", "Gear1_Out": "1 速", "CrownWheel": "クラウンギア",
+                  "DogHub", "BevelPinion", "CrownWheel", "Diff", "Brg_", "NeedleBrg", "ClutchSlave", "DropGear"],
+           labels={"Clutch_Basket": "クラッチ", "DropGear_Clutch": "段差のギア", "InputShaft": "入力軸", "OutputShaft": "出力軸", "Gear1_Out": "1 速", "CrownWheel": "クラウンギア",
                    "Diff_Case": "デフ", "Gearbox": "ケース"}, group=G9, section=("X", 0.0))
 qm.catalog("sec_chassis", "シャシーの断面（燃料タンクの位置）", "Y = 2,000mm で切り、前から見た断面。サバイバルセルの殻の中に燃料セルと、その下のエネルギーストア。"
            "左右のサイドポッドにインタークーラーとオイルクーラー。",

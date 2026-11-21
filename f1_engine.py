@@ -113,7 +113,8 @@ def v6_block(mats=None):
     yb0, yb1 = yf + 40, yr
     mains, yc = v6_mains()
     # 外形：クランクケース（Y 方向の胴）＋左右のバンク
-    st = [(yb0 * MM, 0, (cz - 95) * MM, 0.26, 0.160, 0.03), (yb1 * MM, 0, (cz - 95) * MM, 0.26, 0.160, 0.03)]
+    # クランクの中心は基準面の 90mm 上（規定）なので、クランクケースはクランクの下に 78mm しか取れない（その下はフロア）
+    st = [(yb0 * MM, 0, (cz - 78) * MM, 0.26, 0.143, 0.03), (yb1 * MM, 0, (cz - 78) * MM, 0.26, 0.143, 0.03)]
     block = f1.body("Engine_Block", st, m["alu"], n=3)
     banks = []
     for bank in (-1, 1):
@@ -142,9 +143,8 @@ def v6_block(mats=None):
                     cut += _bank_place([_cyl(f"_stud{bank}{k}{u}", 5.5, V6["deck"] - 70, V6["deck"] + 2, x=_lx(bank, u), y=ysd, seg=16)], bank)
         # クランク室（主軸受の隔壁の間）、オイルの落とし口、主軸受の穴
         for k, (y0, y1) in enumerate(edges[1:]):
-            cut.append(_box(f"_bay{k}", -122, 122, y0, y1, cz - 87, cz + 65))
-            cut.append(_box(f"_drain{k}", -60, 60, y0 + 6, y1 - 6, cz - 100, cz - 80))
-        cut.append(_box("_bayfront", -100, 100, yb0 + 8, mains[0] - 12, cz - 70, cz + 50))
+            cut.append(_box(f"_bay{k}", -122, 122, y0, y1, cz - 72, cz + 65))
+        cut.append(_box("_bayfront", -100, 100, yb0 + 8, mains[0] - 12, cz - 60, cz + 50))
         cut.append(_cyl_y("_mainbore", 30, yb0 - 5, yb1 + 5, z=cz, seg=48))
         # オイルギャラリー（V の谷の中を前後に）と、主軸受への分岐
         cut.append(_cyl_y("_gallery", 6, yb0 + 10, yb1 - 10, z=cz + 75, seg=16))
@@ -152,7 +152,7 @@ def v6_block(mats=None):
             cut.append(_cyl_axis(f"_feed{k}", 3, Vector((0, ym, cz + 75)), Vector((0, ym, cz + 20)), seg=12))
         # ベッドプレートを留めるボルトの穴（主軸受の左右）
         for k, (x, ym) in enumerate(bolt_pos):
-            cut.append(_cyl(f"_mbolt{k}", 5.2, cz - 100, cz + 35, x=x, y=ym, seg=16))
+            cut.append(_cyl(f"_mbolt{k}", 5.2, cz - 85, cz + 35, x=x, y=ym, seg=16))
         return cut
     # 先にクランクの中心の高さで上下に分け（下がベッドプレート）、それぞれに穴をあける
     # （穴をあけたあとで分けると、ブーリアンが失敗することがあるため。分ける面は主軸受の穴の頂点を避けて 0.05mm ずらす）
@@ -164,7 +164,7 @@ def v6_block(mats=None):
     parts = [block, bed]
     for k, (x, ym) in enumerate(bolt_pos):
         b = qm.bolt(f"Engine_MainBolt{k + 1}", "M10", 0.125, material=m["steel"])
-        qm.orient(b, origin=(x * MM, ym * MM, (cz - 95) * MM), x_axis=(1, 0, 0), z_axis=(0, 0, -1))
+        qm.orient(b, origin=(x * MM, ym * MM, (cz - 78) * MM), x_axis=(1, 0, 0), z_axis=(0, 0, -1))
         parts.append(b)
     return parts
 
@@ -346,7 +346,7 @@ def v6_front_cover(mats=None):
     V6, L = _V6(), _L()
     cz, yf = L["crank_z"], L["engine_front"]
     yb0 = yf + 40
-    lower = f1.body("Engine_FrontCover", [(yf * MM, 0, (cz - 95) * MM, 0.26, 0.160, 0.03), (yb0 * MM, 0, (cz - 95) * MM, 0.26, 0.160, 0.03)],
+    lower = f1.body("Engine_FrontCover", [(yf * MM, 0, (cz - 78) * MM, 0.26, 0.143, 0.03), (yb0 * MM, 0, (cz - 78) * MM, 0.26, 0.143, 0.03)],
                     m["alu"], n=3)
     ups = []
     for bank in (-1, 1):
@@ -354,7 +354,7 @@ def v6_front_cover(mats=None):
                    location=(0, (yf + yb0) / 2 * MM, 40 * MM))
         ups += _bank_place([b], bank)
     qm.union(lower, ups)
-    inner = f1.body("_fci", [((yf + 4) * MM, 0, (cz - 89) * MM, 0.248, 0.148, 0.026), ((yb0 + 2) * MM, 0, (cz - 89) * MM, 0.248, 0.148, 0.026)],
+    inner = f1.body("_fci", [((yf + 4) * MM, 0, (cz - 72) * MM, 0.248, 0.131, 0.026), ((yb0 + 2) * MM, 0, (cz - 72) * MM, 0.248, 0.131, 0.026)],
                     None, n=3)
     inu = []
     for bank in (-1, 1):
@@ -367,29 +367,24 @@ def v6_front_cover(mats=None):
 
 
 def v6_sump(mats=None):
-    """ドライサンプのオイルパン（中が空。上はベッドプレートの落とし口に開く）と、スカベンジの吸い口 3 本"""
+    """ドライサンプのスカベンジの吸い口 3 本（クランク室の底から、右の横のスカベンジポンプへ）。
+    クランクが低い（基準面の 90mm 上）ので、クランクの下にオイルパンを置く余地はなく、クランク室の底から直接吸う"""
     m = _mats(mats)
     L = _L()
     cz = L["crank_z"]
-    yb0, yb1 = L["engine_front"] + 40, L["gearbox_y0"]
-    pan = f1.body("Engine_Sump", [((yb0 + 15) * MM, 0, (cz - 150) * MM, 0.21, 0.058, 0.02), ((yb1 - 15) * MM, 0, (cz - 150) * MM, 0.21, 0.058, 0.02)],
-                  m["alu"], n=2)
-    inner = f1.body("_spi", [((yb0 + 19) * MM, 0, (cz - 146) * MM, 0.202, 0.070, 0.016), ((yb1 - 19) * MM, 0, (cz - 146) * MM, 0.202, 0.070, 0.016)],
-                    None, n=2)
-    qm.cut(pan, [inner])
     mains, yc = v6_mains()
     picks = []
     for k, y in enumerate(yc):
-        picks.append(qm.tube(f"Engine_SumpPickup{k + 1}", [(0.04, y * MM, (cz - 143) * MM), (0.07, y * MM, (cz - 135) * MM),
-                                                            (0.115, y * MM, (cz - 128) * MM), (0.135, y * MM, (cz - 126) * MM)],
+        picks.append(qm.tube(f"Engine_SumpPickup{k + 1}", [(0.04, y * MM, (cz - 68) * MM), (0.09, y * MM, (cz - 64) * MM),
+                                                            (0.125, y * MM, (cz - 45) * MM), (0.145, y * MM, (cz - 32) * MM)],
                              radius=0.006, seg=10, material=m["steel"]))
-    return [pan] + picks
+    return picks
 
 
 # ================================================================ 回る部品
 
 
-def _web_outline(pin_ang: float, r_main=34.0, r_pin=28.0, r_cw=72.0, stroke=53.0, n=40):
+def _web_outline(pin_ang: float, r_main=34.0, r_pin=28.0, r_cw=66.0, stroke=53.0, n=40):
     """クランクのウェブの輪郭（主軸のまわり・ピンのまわり・反対側のカウンターウェイトを包む形、XZ のミリ）"""
     pts = []
     for k in range(48):
@@ -751,7 +746,7 @@ def v6_pumps(mats=None):
         qm.orient(objs, origin=c * MM, x_axis=(0, 1, 0), z_axis=out)
         parts += objs
     # スカベンジポンプ：ハウジング（中空）と 3 段のロータ、軸
-    sx, sz = 150, cz - 125
+    sx, sz = 150, cz - 30          # クランクケースの右の横（クランクが低いので、下ではなく横）
     hs = _cyl_y("Engine_ScavengePump", 26, yb0 + 20, yr - 30, x=sx, z=sz, seg=32, material=m["alu"])
     qm.cut(hs, [_cyl_y("_spb", 21, yb0 + 26, yr - 36, x=sx, z=sz, seg=32)])
     parts.append(hs)

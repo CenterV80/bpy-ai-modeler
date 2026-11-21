@@ -613,13 +613,22 @@ def tub(name: str = "Tub", mats=None):
 # 呼び出し側で MM = 0.001 を掛けて渡す使い方を想定している
 
 
+def gearbox_flange_bolts():
+    """エンジンとギアボックスをつなぐフランジのボルト 12 本の (x, z)（メートル）"""
+    z0 = EST["plank_z"] + 0.03
+    fz = z0 - 0.015 + 0.435 / 2
+    return ([(x, fz + s * 0.195) for x in (-0.18, -0.06, 0.06, 0.18) for s in (-1, 1)] +
+            [(s * 0.18, fz + t * 0.07) for s in (-1, 1) for t in (-1, 1)])
+
+
 def gearbox(name: str = "Gearbox", y0: float = 2.90, length: float = 0.66, mats=None):
     """ギアボックスのケース（前のベルハウジングのフランジから、後ろへ絞り込む）。y0 がエンジン後端の面。
     戻り値 [フランジ, ケース]"""
     z0 = EST["plank_z"] + 0.03
-    flange = body(f"{name}_Flange", [(y0, 0, z0 + 0.06, 0.40, 0.36, 0.06), (y0 + 0.022, 0, z0 + 0.06, 0.40, 0.36, 0.06)],
+    # クラッチはクランクの高さ（低い）にあるので、ベルハウジングと前のケースは下まで伸ばす
+    flange = body(f"{name}_Flange", [(y0, 0, z0 - 0.015, 0.40, 0.435, 0.06), (y0 + 0.022, 0, z0 - 0.015, 0.40, 0.435, 0.06)],
                   _mk(mats, "magnesium", (0.32, 0.32, 0.34), 0.6, 0.5), n=4)
-    st = [(y0 + 0.020, 0, z0 + 0.08, 0.32, 0.32, 0.05), (y0 + 0.20, 0, z0 + 0.10, 0.28, 0.30, 0.05),
+    st = [(y0 + 0.020, 0, z0 - 0.01, 0.32, 0.41, 0.05), (y0 + 0.20, 0, z0 + 0.0, 0.28, 0.40, 0.05),
           (y0 + 0.42, 0, z0 + 0.12, 0.30, 0.30, 0.05),      # デフ（ドライブシャフトの出口）のあたりで少し広い
           (y0 + 0.56, 0, z0 + 0.15, 0.20, 0.24, 0.04), (y0 + length, 0, z0 + 0.18, 0.15, 0.18, 0.03)]
     case = body(name, st, _m(mats, "carbon"), n=4)
@@ -643,10 +652,12 @@ def gearbox(name: str = "Gearbox", y0: float = 2.90, length: float = 0.66, mats=
         ys_ = [ya] + [c[0] for c in st if ya < c[0] < yb] + [yb]
         return body("_gbi", [shrink(at(min(max(y, st[0][0]), st[-1][0])), y) for y in ys_], None, n=4)
     # 空洞は 3 つ（ベルハウジング・ギアの部屋・デフの部屋）。間に残る壁が、前後の軸受の壁になる
-    holes = [cavity(y0 - 0.005, y0 + 0.051), cavity(y0 + 0.089, y0 + 0.353), cavity(y0 + 0.395, y0 + length - wall)]
+    holes = [cavity(y0 - 0.005, y0 + 0.062), cavity(y0 + 0.089, y0 + 0.353), cavity(y0 + 0.395, y0 + length - wall)]
     for z, r in ((0.270, 0.031), (0.355, 0.036)):                       # 入力軸・出力軸の軸受の穴（前後の壁）
-        for ya, yb in ((y0 + 0.045, y0 + 0.095), (y0 + 0.347, y0 + 0.401)):
+        for ya, yb in ((y0 + 0.056, y0 + 0.095), (y0 + 0.347, y0 + 0.401)):
             holes.append(qm.cylinder("_bb", r, yb - ya, seg=40, axis="Y", location=(0, (ya + yb) / 2, z)))
+    # クラッチの軸（クランクの高さ）の軸受の穴（前の壁）。段差のギアで入力軸へ上げる
+    holes.append(qm.cylinder("_cb", 0.031, 0.04, seg=40, axis="Y", location=(0, y0 + 0.0755, LAYOUT["crank_z"] * 0.001)))
     holes.append(qm.cylinder("_drum", 0.031, 0.06, seg=32, axis="Y", location=(0.075, y0 + 0.07, 0.355)))   # シフトドラムのアクチュエーター
     for s_ in (-1, 1):                                                   # 左右の横：デフの軸受の受け（別の部品）を差し込む穴
         holes.append(qm.cylinder("_dside", 0.062, 0.08, seg=48, axis="X", location=(s_ * 0.120, 3.400, 0.355)))
@@ -667,8 +678,7 @@ def gearbox(name: str = "Gearbox", y0: float = 2.90, length: float = 0.66, mats=
             qm.orient(bo, origin=(s_ * 0.133, 3.400 + 0.071 * math.cos(a_), 0.355 + 0.071 * math.sin(a_)), x_axis=(0, 1, 0), z_axis=(s_, 0, 0))
             extra.append(bo)
     # フランジのボルト穴（エンジンとギアボックスをつなぐ 12 本）
-    fz = z0 + 0.06 + 0.18
-    pos = [(x, fz + s_ * 0.16) for x in (-0.18, -0.06, 0.06, 0.18) for s_ in (-1, 1)] + [(s_ * 0.18, fz + t * 0.055) for s_ in (-1, 1) for t in (-1, 1)]
+    pos = gearbox_flange_bolts()
     qm.cut(flange, [qm.cylinder("_fb", 0.0052, 0.04, seg=16, axis="Y", location=(x, y0 + 0.011, z)) for x, z in pos])
     return [flange, case] + extra
 
@@ -866,7 +876,8 @@ LAYOUT = {
     "cockpit": (1050, 1850),          # コクピットの開口（前・後ろの y）
     "fuel_cell": (1880, 2240),        # 燃料タンクの前後
     "engine_front": 2500,             # エンジンの前のカバーの前面
-    "crank_z": 270,                   # クランク軸の高さ（ギアボックスの入力軸にそろえた）
+    "crank_z": 125,                   # クランク軸の高さ。規定：基準面（プランクの上面）の 90mm 上（2026 年 Section C）。
+                                      # 基準面の高さ 35mm（= EST["plank_z"]、車高）は推定
     "gearbox_y0": 2900,               # ギアボックスのフランジ（エンジン後端）
 }
 V6 = {"bore": 80.0, "stroke": 53.0, "vee": 90.0,                       # 確認できた値
@@ -1417,7 +1428,7 @@ def exhaust(name: str = "Exhaust", turbine_in=None, mats=None):
     tc = V6["deck"] + V6["head"] * 0.5
     for bank, tag in ((-1, "L"), (1, "R")):
         cx = bank * 300
-        cz = 315
+        cz = LAYOUT["crank_z"] + 45
         coll0 = Vector((cx, yr - 20, cz))
         for b, i, y in v6_cylinders():
             if b != bank:
@@ -1439,7 +1450,7 @@ def exhaust(name: str = "Exhaust", turbine_in=None, mats=None):
         qm.orient(col, origin=coll0 * MM, x_axis=(1, 0, 0), z_axis=(0, 1, 0))
         parts.append(col)
         t_in = Vector((bank * abs(tin.x), tin.y, tin.z))
-        sec = [coll0 + Vector((0, 70, 0)), Vector((bank * 240, yr + 110, 450)), Vector((bank * 170, tin.y - 60, tin.z - 40)), t_in]
+        sec = [coll0 + Vector((0, 70, 0)), Vector((bank * 240, yr + 110, LAYOUT["crank_z"] + 180)), Vector((bank * 170, tin.y - 60, tin.z - 40)), t_in]
         parts.append(qm.tube(f"{name}_ToTurbo{tag}", [p * MM for p in sec], radius=0.026, seg=12, material=inconel))
         hollow(parts[-1], [p * MM for p in sec], 0.026, 0.0015)
     return parts
