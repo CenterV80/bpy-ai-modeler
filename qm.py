@@ -15,7 +15,7 @@ import bpy
 from mathutils import Matrix, Vector
 
 __all__ = ["material", "obj", "box", "cylinder", "lathe", "loft", "sweep", "tube", "quad_sphere", "cap_grid",
-           "circle", "arc", "polygon", "helix", "ring", "nut", "washer", "bolt", "gear", "flange", "wheel",
+           "circle", "arc", "polygon", "helix", "airfoil", "ring", "nut", "washer", "bolt", "gear", "flange", "wheel",
            "pivot", "copy", "array", "radial", "mirror", "bevel", "subsurf", "solidify", "expect", "METRIC", "HELP"]
 
 
@@ -319,6 +319,24 @@ def polygon(n: int, r: float, start: float = 0.0, per_edge: int = 1):
     return out
 
 
+def airfoil(chord: float = 1.0, thickness: float = 0.12, camber: float = 0.0, camber_pos: float = 0.4, n: int = 12):
+    """翼の断面（NACA 4 桁の式）の点 [(u, v), ...]。u は前縁 0 → 後縁 chord、v は厚み方向。点は 2n 個（偶数）。
+    camber を負にすると下向きに反った翼（F1 のウイングのように下に押し付ける）になる"""
+    def yt(x):
+        return 5 * thickness * (0.2969 * math.sqrt(x) - 0.126 * x - 0.3516 * x ** 2 + 0.2843 * x ** 3 - 0.1036 * x ** 4)
+
+    def yc(x):
+        m, p = camber, camber_pos
+        if m == 0:
+            return 0.0
+        return m / p ** 2 * (2 * p * x - x * x) if x < p else m / (1 - p) ** 2 * ((1 - 2 * p) + 2 * p * x - x * x)
+
+    xs = [0.5 * (1 - math.cos(math.pi * i / n)) for i in range(n + 1)]   # 前縁・後縁を細かく
+    upper = [(x, yc(x) + yt(x)) for x in reversed(xs)]                     # 後縁 → 前縁
+    lower = [(x, yc(x) - yt(x)) for x in xs[1:-1]]                         # 前縁の次 → 後縁の手前
+    return [(x * chord, y * chord) for x, y in upper + lower]
+
+
 def helix(r: float, pitch: float, turns: float, per_turn: int = 16, z0: float = 0.0):
     """らせんの点 [(x, y, z), ...]（Z 軸まわり）。qm.tube と組み合わせて、ばね・コイル・ねじの山に"""
     n = max(2, int(round(turns * per_turn)))
@@ -584,7 +602,8 @@ HELP = """qm（四角ポリゴン主体のモデリング用の関数。run_scri
 - qm.cap_grid(bm, [BMVert の輪])   自分で組んだ bmesh の穴を四角形の格子でふさぐ（頂点数は偶数に）
 - qm.obj(name, bm, material)   自分で組んだ bmesh をオブジェクトにする（法線もそろえる）
 - 点の補助: qm.circle(n, r) → [(x,y)...]、qm.arc(r, 開始角, 終了角, 分割数) → [(x,y)...]（度）、
-    qm.polygon(n, r, per_edge=1) 正多角形、qm.helix(r, pitch, turns) らせん（qm.tube と組んでばね・コイル）
+    qm.polygon(n, r, per_edge=1) 正多角形、qm.helix(r, pitch, turns) らせん（qm.tube と組んでばね・コイル）、
+    qm.airfoil(chord, thickness=0.12, camber=0) 翼の断面 [(u,v)...]（qm.loft で翼・羽根・プロペラに）
 
 部品（寸法付き。どれも四角形だけの閉じた立体。rotate=(rx,ry,rz) 度で向きを変える）
 - qm.bolt(name, "M8", length=0.03, thread=False)   六角ボルト。原点は頭の座面、軸は -Z へ。"M3"〜"M12"、または直径の数値

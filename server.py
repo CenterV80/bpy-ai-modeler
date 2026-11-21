@@ -54,6 +54,7 @@ import addon_utils  # noqa: E402
 import bmesh  # noqa: E402
 import mathutils  # noqa: E402
 import qm  # noqa: E402  （四角ポリゴン主体のモデリング用の関数。スクリプトの中で qm として使える）
+import f1  # noqa: E402  （F1 マシンの部品。スクリプトの中で f1 として使える）
 import uvicorn  # noqa: E402
 from mcp.server.mcpserver import Image, MCPServer  # noqa: E402
 from starlette.applications import Starlette  # noqa: E402
@@ -101,7 +102,7 @@ class ScriptTimeout(Exception):
 
 def run_code(code: str) -> tuple[bool, str]:
     """スクリプトを実行し、(成功したか, 出力とエラー) を返す"""
-    ns = {"__name__": "__gen__", "bpy": bpy, "bmesh": bmesh, "mathutils": mathutils, "math": math, "qm": qm,
+    ns = {"__name__": "__gen__", "bpy": bpy, "bmesh": bmesh, "mathutils": mathutils, "math": math, "qm": qm, "f1": f1,
           "Vector": mathutils.Vector, "Matrix": mathutils.Matrix}
     buf = io.StringIO()
     use_alarm = hasattr(signal, "setitimer") and threading.current_thread() is threading.main_thread() and ARGS.timeout > 0
@@ -780,7 +781,7 @@ GUIDE = """Blender（GUI なし）でメッシュを作るツールです。手�
 4. 問題がなくなったら、ユーザーに結果を伝える。保存先を頼まれたら export を使う
 
 実行環境:
-- bpy, bmesh, mathutils, math, qm, Vector, Matrix は import 済み。3D ビューや UI はない
+- bpy, bmesh, mathutils, math, qm, f1, Vector, Matrix は import 済み。3D ビューや UI はない（F1 は f1_help を読む）
 - 単位はメートルで実寸。Z が上。接地するものは原点を底面の中心に置く
 - メッシュは bmesh か bpy.data で直接組み立てる。bpy.ops は 3D ビューがないと動かないものがあるので、
   プリミティブ追加・モディファイア・オブジェクトモードの操作程度にとどめる
@@ -845,6 +846,12 @@ async def render(views: list[str] | None = None, size: int = 384, run: int | Non
 async def qm_help() -> str:
     """スクリプトの中で使える qm（四角ポリゴン主体のモデリング用の関数）の説明と例。最初に一度読む"""
     return qm.HELP
+
+
+@mcp.tool(structured_output=False)
+async def f1_help() -> str:
+    """F1 マシン（2026 年規定）の部品を作る f1 の説明。F1・フォーミュラカーを作るときに読む"""
+    return f1.HELP
 
 
 @mcp.tool(structured_output=False)
