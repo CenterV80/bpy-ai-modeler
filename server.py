@@ -53,6 +53,7 @@ import bpy  # noqa: E402  （addon_utils などは bpy を読み込んだ後で�
 import addon_utils  # noqa: E402
 import bmesh  # noqa: E402
 import mathutils  # noqa: E402
+import qm  # noqa: E402  （四角ポリゴン主体のモデリング用の関数。スクリプトの中で qm として使える）
 import uvicorn  # noqa: E402
 from mcp.server.mcpserver import Image, MCPServer  # noqa: E402
 from starlette.applications import Starlette  # noqa: E402
@@ -100,7 +101,8 @@ class ScriptTimeout(Exception):
 
 def run_code(code: str) -> tuple[bool, str]:
     """スクリプトを実行し、(成功したか, 出力とエラー) を返す"""
-    ns = {"__name__": "__gen__", "bpy": bpy, "bmesh": bmesh, "mathutils": mathutils, "math": math}
+    ns = {"__name__": "__gen__", "bpy": bpy, "bmesh": bmesh, "mathutils": mathutils, "math": math, "qm": qm,
+          "Vector": mathutils.Vector, "Matrix": mathutils.Matrix}
     buf = io.StringIO()
     use_alarm = hasattr(signal, "setitimer") and threading.current_thread() is threading.main_thread() and ARGS.timeout > 0
     if use_alarm:
@@ -130,8 +132,13 @@ def run_code(code: str) -> tuple[bool, str]:
     return ok, buf.getvalue()
 
 
+GEOM: dict = {}  # 最後に調べたシーンの、オブジェクトごとの形（接触の判定用。BVH と頂点の見本）
+
+
 def inspect_scene() -> tuple[dict, list[dict], list[float]]:
     """モディファイア適用後の見た目でトポロジーを数える。(合計, オブジェクトごと, ワイヤー用の辺)"""
+    from mathutils.bvhtree import BVHTree
+    GEOM.clear()
     keys = ("verts", "faces", "quads", "tris", "ngons", "bad_edges", "flipped_edges", "boundary_edges",
             "loose_verts", "loose_edges", "dup_verts", "degenerate", "inward")
     total = dict(objects=0, **{k: 0 for k in keys})
@@ -171,6 +178,12 @@ def inspect_scene() -> tuple[dict, list[dict], list[float]]:
                 for v in e.verts:  # Blender(Z 上) → three.js(Y 上)
                     wire += (v.co.x, v.co.z, -v.co.y)
         q["loose_verts"] = sum(1 for v in bm.verts if not v.link_edges)
+        if bm.verts:  # ワールド座標での外接箱（寸法と配置の確認用）
+            q["min"] = [round(min(v.co[i] for v in bm.verts), 4) for i in range(3)]
+            q["max"] = [round(max(v.co[i] for v in bm.verts), 4) for i in range(3)]
+            if bm.faces:
+                step = max(1, len(bm.verts) // 3000)
+                GEOM[o.name] = (BVHTree.FromBMesh(bm), [v.co.copy() for v in bm.verts[::step]])
         if bm.verts:
             doubles = bmesh.ops.find_doubles(bm, verts=bm.verts, dist=eps)["targetmap"]
             q["dup_verts"] = len(doubles)
@@ -184,6 +197,78 @@ def inspect_scene() -> tuple[dict, list[dict], list[float]]:
             total[k] += q[k]
         per.append(q)
     return total, per, wire
+
+
+def layout_problems(per: list[dict]) -> list[str]:
+    """形のおかしさ（沈み・浮き・宣言した寸法との差）を見つける"""
+    per = [p for p in per if "min" in p]
+    if not per:
+        return []
+    exp = json.loads(bpy.context.scene.get("qm_expect", "[]"))
+    may_float = {e["target"] for e in exp if e.get("floating")}
+    lo = [min(p["min"][i] for p in per) for i in range(3)]
+    hi = [max(p["max"][i] for p in per) for i in range(3)]
+    diag = math.dist(lo, hi)
+    tol = max(0.005, diag * 0.01)
+    out = []
+    if "*" not in may_float:
+        if lo[2] < -tol:
+            out.append(f"全体の底が地面（z=0）より {-lo[2]:.3f}m 下にある。接地するものは底面を z=0 に置く")
+        elif lo[2] > tol:
+            out.append(f"全体が地面（z=0）から {lo[2]:.3f}m 浮いている。接地するものは底面を z=0 に置く")
+
+    def box_gap(a, b):
+        return math.sqrt(sum(max(0.0, a["min"][i] - b["max"][i], b["min"][i] - a["max"][i]) ** 2 for i in range(3)))
+
+    def inside(a, b):  # a の外接箱が b の外接箱の中にすっぽり入っている
+        return all(a["min"][i] >= b["min"][i] - tol and a["max"][i] <= b["max"][i] + tol for i in range(3))
+
+    def gap(a, b):
+        """実際の面どうしの距離（面が交わっていれば 0）。外接箱が離れていればその距離"""
+        g = box_gap(a, b)
+        ga, gb = GEOM.get(a["name"]), GEOM.get(b["name"])
+        if g > tol or not ga or not gb:
+            return g
+        if ga[0].overlap(gb[0]) or inside(a, b) or inside(b, a):
+            return 0.0
+        d = min((gb[0].find_nearest(v)[3] for v in ga[1]), default=g)
+        d = min([d] + [ga[0].find_nearest(v)[3] for v in gb[1]])
+        return d if d is not None else g
+
+    floating = []
+    if len(per) > 1 or "*" not in may_float:
+        for p in per:
+            if p["name"] in may_float or "*" in may_float:
+                continue
+            d = max(0.0, p["min"][2])
+            for o in per:
+                if d <= tol:
+                    break
+                if o is not p:
+                    d = min(d, gap(p, o))
+            if d > tol:
+                floating.append(f"{p['name']}（いちばん近い物まで {d:.3f}m）")
+    if floating:
+        out.append("地面にもほかの部品にも接していない部品がある: " + "、".join(floating[:6])
+                   + "。位置や回転の軸（pivot の point）を確かめる。わざと浮かせるなら qm.expect(名前, floating=True)")
+    for e in exp:
+        if not e.get("size"):
+            continue
+        if e["target"] == "*":
+            got, label = [hi[i] - lo[i] for i in range(3)], "全体"
+        else:
+            hit = [p for p in per if p["name"] == e["target"]]
+            if not hit:
+                out.append(f"qm.expect の対象「{e['target']}」というオブジェクトがない")
+                continue
+            got, label = [hit[0]["max"][i] - hit[0]["min"][i] for i in range(3)], e["target"]
+        bad = []
+        for axis, want, have in zip("XYZ", e["size"], got):
+            if want is not None and abs(have - want) > max(0.005, abs(want) * e.get("tol", 0.03)):
+                bad.append(f"{axis} {have:.3f}m（宣言 {want:.3f}m）")
+        if bad:
+            out.append(f"{label} の寸法が宣言と違う: " + "、".join(bad))
+    return out
 
 
 def problems_of(q: dict, per: list[dict]) -> list[str]:
@@ -214,6 +299,10 @@ def problems_of(q: dict, per: list[dict]) -> list[str]:
                  f"{where('loose_verts') or where('loose_edges')}")
     if q["faces"] > FACE_LIMIT:
         p.append(f"面が {q['faces']:,} 枚と多すぎる。{FACE_LIMIT:,} 枚以下にする（サブディビジョンのレベルを下げる）")
+    try:
+        p += layout_problems(per)
+    except Exception as e:  # 検査の失敗で実行全体を落とさない
+        p.append(f"配置の検査に失敗: {e}")
     return p
 
 
@@ -643,14 +732,19 @@ def report(run: dict) -> str:
               f"合計: オブジェクト {s['objects']} / 頂点 {s['verts']:,} / 面 {s['faces']:,}"
               f"（四角形 {s['quads']:,} = {pct}%、三角形 {s['tris']:,}、Nゴン {s['ngons']:,}）",
               f"開いている辺 {s['boundary_edges']:,}（穴や板状の部品の縁。意図したものなら問題ない）",
-              "", "オブジェクトごと:"]
+              "", "オブジェクトごと（大きさは 幅X×奥行Y×高さZ）:"]
     for o in run["objects"][:40]:
         extra = [f"{label} {o[k]}" for k, label in (("ngons", "Nゴン"), ("bad_edges", "非多様体"), ("flipped_edges", "逆向きの辺"),
                                                     ("inward", "内向き"), ("dup_verts", "重複頂点"), ("degenerate", "つぶれた面"),
                                                     ("loose_verts", "孤立頂点")) if o[k]]
         if o["boundary_edges"]:
             extra.append(f"開いている辺 {o['boundary_edges']}")
-        lines.append(f"- {o['name']}: 面 {o['faces']:,}（四角 {o['quads']:,} / 三角 {o['tris']:,}）" + (f" ⚠ {'、'.join(extra)}" if extra else ""))
+        size = ""
+        if "min" in o:
+            w, d, h = (round((o["max"][i] - o["min"][i]) * 100, 1) for i in range(3))
+            size = f" ／ {w:g}×{d:g}×{h:g}cm（高さ {o['min'][2] * 100:.1f}〜{o['max'][2] * 100:.1f}cm）"
+        lines.append(f"- {o['name']}: 面 {o['faces']:,}（四角 {o['quads']:,} / 三角 {o['tris']:,}）{size}"
+                     + (f" ⚠ {'、'.join(extra)}" if extra else ""))
     if len(run["objects"]) > 40:
         lines.append(f"- ほか {len(run['objects']) - 40} 個")
     mats = run.get("materials") or []
@@ -664,7 +758,7 @@ def report(run: dict) -> str:
     if run["problems"]:
         lines += ["", "検査で見つかった問題（形は保ったまま直してください）:"] + [f"- {p}" for p in run["problems"]]
     else:
-        lines += ["", "トポロジー検査を通りました。"]
+        lines += ["", "検査（トポロジー・配置・寸法）を通りました。"]
     if VIEWER["url"]:
         lines += ["", f"ビューアー: {VIEWER['url']} に表示しています。形を目で確かめるには render を使ってください。"]
     else:
@@ -678,13 +772,15 @@ GUIDE = """Blender（GUI なし）でメッシュを作るツールです。手�
 四角ポリゴン主体のきれいなメッシュを、bpy の Python スクリプトで作ってください。
 
 進め方:
-1. run_script にスクリプト全体を渡して実行する（毎回まっさらな空のシーンから実行される）
+0. 最初に qm_help を読む。箱・円柱・回転体・管・球・穴埋め・回転の軸などは qm の関数で作ると、四角形だけのきれいな面になり、書き間違いも減る
+1. run_script にスクリプト全体を渡して実行する（毎回まっさらな空のシーンから実行される）。
+   主な部品の寸法は qm.expect("名前", size=(幅, 奥行, 高さ)) で宣言しておくと、サーバーが照合する
 2. 返ってくるトポロジーの検査結果を読み、問題があれば形を保ったまま直して、スクリプト全体をもう一度実行する
 3. render で絵を見て、頼まれた形になっているかを確かめる。違えば直す（テクスチャは look="material" で見る）
 4. 問題がなくなったら、ユーザーに結果を伝える。保存先を頼まれたら export を使う
 
 実行環境:
-- bpy, bmesh, mathutils, math は import 済み。3D ビューや UI はない
+- bpy, bmesh, mathutils, math, qm, Vector, Matrix は import 済み。3D ビューや UI はない
 - 単位はメートルで実寸。Z が上。接地するものは原点を底面の中心に置く
 - メッシュは bmesh か bpy.data で直接組み立てる。bpy.ops は 3D ビューがないと動かないものがあるので、
   プリミティブ追加・モディファイア・オブジェクトモードの操作程度にとどめる
@@ -706,6 +802,7 @@ GUIDE = """Blender（GUI なし）でメッシュを作るツールです。手�
 - サブディビジョンで丸めるなら、角を保ちたい所にサポートエッジループを入れる
 - 円柱などのフタは Nゴンにせず、四角形のグリッド状か、少なくとも三角ファンにする
 - 法線は外向き、重複頂点なし、孤立頂点なし、非多様体なし
+- 部品は地面か、ほかの部品に接するように置く（浮いていると検査で指摘される）
 - モディファイア（Subdivision Surface, Mirror, Solidify, Bevel など）は使ってよい。
   書き出し時に適用された形が最終結果になるので、面数が膨らみすぎないようにする（目安は合計 5 万面まで）"""
 
@@ -742,6 +839,12 @@ async def render(views: list[str] | None = None, size: int = 384, run: int | Non
         ensure_scene(target)
         png = render_views(views[:4], max(128, min(int(size), 768)), "material" if look == "material" else "clay", bool(wire))
     return [f"実行 {target['id']}「{target['title']}」: 左から {', '.join(views[:4])}", Image(data=png, format="png")]
+
+
+@mcp.tool(structured_output=False)
+async def qm_help() -> str:
+    """スクリプトの中で使える qm（四角ポリゴン主体のモデリング用の関数）の説明と例。最初に一度読む"""
+    return qm.HELP
 
 
 @mcp.tool(structured_output=False)
