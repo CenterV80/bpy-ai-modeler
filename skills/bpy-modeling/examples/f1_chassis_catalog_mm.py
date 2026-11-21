@@ -137,11 +137,11 @@ qm.orient(qm.gear("MGUK_Idler", 38, 2.5 * MM, 14 * MM, bore=10 * MM, material=st
 qm.cylinder("MGUK_IdlerShaft", 0.010, 0.040, seg=12, axis="Y", location=tuple(P(I2.x, YF + 19, I2.y)), material=steel_k)
 
 # =========================================================== 冷却（左右のラジエーター、右のインタークーラー、左のオイルクーラー）
-def cooler(name, s, center, length, height, tilt=15):
+def cooler(name, s, center, length, height, tilt=15, thick=50):
     a = math.radians(tilt)
     x_ax = Vector((math.cos(a), 0, -s * math.sin(a)))
     z_ax = Vector((s * math.sin(a), 0, math.cos(a)))
-    parts = f1.radiator(name, length * MM, height * MM, 0.05, mats=mats)
+    parts = f1.radiator(name, length * MM, height * MM, thick * MM, mats=mats)
     qm.orient(parts, origin=P(*center), x_axis=x_ax, z_axis=z_ax)
     def at(ly, lz):
         return P(*center) + Vector((0, ly * MM, 0)) + z_ax * (lz * MM)
@@ -154,22 +154,22 @@ def cooler(name, s, center, length, height, tilt=15):
     return top_in, bot_out
 
 for s, tg in ((-1, "L"), (1, "R")):
-    r_in, r_out = cooler(f"Radiator{tg}", s, (s * 500, 1700, 350), 500, 360)
+    r_in, r_out = cooler(f"Radiator{tg}", s, (s * 505, 1700, 350), 500, 420, thick=65)     # サイドポッドの高さいっぱい
     wp = f1.v6_point(s, 130, -40, YF - 15)
     out = f1.v6_point(s, 300, -40, YF + 10)
     route(f"WaterPipeHot{tg}", [out * MM, P(out.x, YF - 20, out.z), P(s * 330, 2450, 600), P(s * 480, 2150, 640), r_in + Vector((0, 0, 0.03)), r_in - Vector((0, 0, 0.012))],
             r=0.019, kind="water", mats=mats)
-    route(f"WaterPipeCold{tg}", [r_out + Vector((0, 0, 0.012)), r_out - Vector((0, 0, 0.03)), P(s * 390, 1400, 110), P(s * 390, 2430, 110),
+    route(f"WaterPipeCold{tg}", [r_out + Vector((0, 0, 0.012)), r_out - Vector((0, 0, 0.03)), r_out - Vector((s * 0.03, 0.03, 0.05)), P(s * 390, 1440, 70), P(s * 390, 2430, 110),
                                    P(s * 200, 2448, 250), P(wp.x, YF - 28, wp.z)], r=0.019, kind="water", mats=mats)
 
-ic_in, ic_out = cooler("Intercooler", 1, (500, 2110, 330), 220, 300)
+ic_in, ic_out = cooler("Intercooler", 1, (505, 2110, 345), 220, 360, thick=60)
 th_y = min(y for _, _, y in f1.v6_cylinders()) - 55 - 40
 route("ChargePipe1", [TC + Vector((0.115, -0.060, -0.045)), P(300, 2950, 600), P(430, 2500, 570), ic_in + Vector((0, 0, 0.04)), ic_in - Vector((0, 0, 0.012))],
         r=0.030, kind="air", mats=mats)
 route("ChargePipe2", [ic_out + Vector((0, 0, 0.012)), ic_out - Vector((0, 0, 0.04)), P(455, 2440, 95), P(300, 2462, 400), P(120, 2468, 600),
                         P(0, 2482, 600), P(0, th_y + 15, CZ + 330)], r=0.030, kind="air", mats=mats)
 
-oc_in, oc_out = cooler("OilCooler", -1, (-500, 2090, 300), 180, 220)
+oc_in, oc_out = cooler("OilCooler", -1, (-505, 2100, 330), 200, 300, thick=55)
 route("OilLineFeed", [P(-120, 2330, 470), P(-330, 2330, 480), oc_in + Vector((0, 0, 0.04)), oc_in - Vector((0, 0, 0.012))], r=0.012, kind="oil", mats=mats)
 route("OilLineReturn", [oc_out + Vector((0, 0, 0.012)), oc_out - Vector((0, 0, 0.05)), P(-445, 2300, 85), P(-200, 2440, 300), P(-100, 2400, 330)],
         r=0.012, kind="oil", mats=mats)
@@ -272,6 +272,9 @@ def place(parts, y, z, x=0.0):
     return qm.orient(parts, origin=P(x, y, z), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
 
 place(f1.clutch("Clutch", d=100 * MM, mats=mats), 2905, IN_Z)
+# クラッチを切る、入力軸のまわりの油圧のシリンダー（コンセントリック・スレーブシリンダー）とレリーズベアリング
+place(qm.ring("ClutchSlave", 34 * MM, 20 * MM, 7 * MM, seg=32, material=mats["titanium"]), 2944, IN_Z)
+place(qm.ring("ClutchSlave_ReleaseBearing", 28 * MM, 18 * MM, 3 * MM, seg=32, material=steel), 2941, IN_Z)
 place(qm.lathe("InputShaft", [(16 * MM, 0), (16 * MM, 385 * MM)], seg=16, material=steel), 2915, IN_Z)
 place(qm.lathe("OutputShaft", [(18 * MM, 0), (18 * MM, 335 * MM)], seg=16, material=steel), 2975, OUT_Z)
 Y0, BLOCK = 2995.0, 56.0
@@ -281,13 +284,17 @@ for b in range(4):
     for k, ys in ((2 * b, yb), (2 * b + 1, yb + 35)):
         zi, zo = PAIRS[k]
         place(qm.gear(f"Gear{k + 1}_In", zi, Mg * MM, GW * MM, bore=16 * MM, material=gear_mat), ys, IN_Z)
-        place(qm.gear(f"Gear{k + 1}_Out", zo, Mg * MM, GW * MM, bore=18 * MM, material=gear_mat), ys, OUT_Z)
+        # 出力軸のギアは空転し（ドッグハブで選んだ段だけが軸に固定される）、軸との間にニードル軸受
+        place(qm.gear(f"Gear{k + 1}_Out", zo, Mg * MM, GW * MM, bore=22 * MM, material=gear_mat), ys, OUT_Z)
+        place(f1.needle_bearing(f"NeedleBrg{k + 1}", 18 * MM, 22 * MM, (GW - 1) * MM, mats=mats), ys + GW / 2, OUT_Z)
     hub_ys.append(yb + 24)
     place(f1.dog_hub(f"DogHub{b + 1}", r_in=18 * MM, r_out=32 * MM, width=16 * MM, mats=mats), yb + 24, OUT_Z)
 BARREL_X, BARREL_Y0 = 75.0, 2990.0
 place(f1.shift_barrel("ShiftBarrel", 225 * MM, 24 * MM, tracks=[(y - BARREL_Y0) * MM for y in hub_ys], mats=mats), BARREL_Y0, OUT_Z, BARREL_X)
 for b, y in enumerate(hub_ys):
     place(f1.selector_fork(f"Fork{b + 1}", 32 * MM, (BARREL_X * MM, 0), mats=mats), y, OUT_Z)
+# セレクターレール（フォークが前後に滑る棒。前後の軸受の壁の間に渡す）
+qm.cylinder("SelectorRail", 0.005, (3253 - 2989) * MM, seg=16, axis="Y", location=tuple(P(44, (2989 + 3253) / 2, OUT_Z)), material=steel)
 place(qm.gear("ReverseIdler", 18, Mg * MM, GW * MM, bore=8 * MM, material=gear_mat), 3222, (IN_Z + OUT_Z) / 2, 58)
 place(qm.lathe("ReverseIdlerShaft", [(8 * MM, 0), (8 * MM, 30 * MM)], seg=12, material=steel), 3214, (IN_Z + OUT_Z) / 2, 58)
 for nm, y, z, di, do, w in (("Brg_InFront", 2958, IN_Z, 32, 62, 14), ("Brg_InRear", 3288, IN_Z, 32, 62, 14),
@@ -557,13 +564,15 @@ qm.catalog("gearbox", "ギアボックスのケースと後ろの衝撃吸収構
            parts=["Gearbox", "RearCrash", "RainLight"],
            labels={"Gearbox_Flange": "ベルハウジングのフランジ", "Gearbox": "ケース", "RearCrash": "衝撃吸収構造", "GearboxOilCooler": "オイルクーラー", "RainLight": "レインライト",
                    "Gearbox_Bolt1": "フランジのボルト"}, group=G7, view="front-left")
-qm.catalog("clutch", "クラッチ", "カーボンの多板クラッチ。直径およそ 100mm。", parts=["Clutch"],
-           labels={"Clutch_Basket": "バスケット", "Clutch_Friction1": "摩擦板", "Clutch_PressurePlate": "押し付け板", "Clutch_Hub": "ハブ"}, group=G7)
+qm.catalog("clutch", "クラッチ", "カーボンの多板クラッチ。直径およそ 100mm。入力軸のまわりの油圧のシリンダーで切る。", parts=["Clutch"],
+           labels={"Clutch_Basket": "バスケット", "Clutch_Friction1": "摩擦板", "Clutch_PressurePlate": "押し付け板", "Clutch_Hub": "ハブ",
+                   "ClutchSlave": "スレーブシリンダー"}, group=G7)
 qm.catalog("gears", "前進 8 段のギア列", "入力軸と出力軸に 8 組の歯車。ドッグハブ 4 個で 1 組ずつ選ぶ。歯数とモジュールは推定。",
-           parts=["InputShaft", "OutputShaft", "Gear1_", "Gear2_", "Gear3_", "Gear4_", "Gear5_", "Gear6_", "Gear7_", "Gear8_", "DogHub", "ReverseIdler", "Brg_In", "Brg_Out"],
-           labels={"InputShaft": "入力軸", "OutputShaft": "出力軸", "Gear1_": "1 速", "Gear8_": "8 速", "DogHub2": "ドッグハブ", "ReverseIdler": "リバース"}, group=G7)
+           parts=["InputShaft", "OutputShaft", "Gear1_", "Gear2_", "Gear3_", "Gear4_", "Gear5_", "Gear6_", "Gear7_", "Gear8_", "DogHub", "ReverseIdler", "Brg_In", "Brg_Out", "NeedleBrg"],
+           labels={"InputShaft": "入力軸", "OutputShaft": "出力軸", "Gear1_": "1 速", "Gear8_": "8 速", "DogHub2": "ドッグハブ", "ReverseIdler": "リバース",
+                   "NeedleBrg3": "ニードル軸受"}, group=G7)
 qm.catalog("shift", "シフトドラムとフォーク", "ドラムの溝がフォークを動かし、フォークがドッグハブを滑らせる（シームレスシフト）。",
-           parts=["ShiftBarrel", "Fork", "DogHub"], labels={"ShiftBarrel_Drum": "シフトドラム", "ShiftBarrel_Actuator": "アクチュエーター",
+           parts=["ShiftBarrel", "Fork", "DogHub", "SelectorRail"], labels={"SelectorRail": "セレクターレール", "ShiftBarrel_Drum": "シフトドラム", "ShiftBarrel_Actuator": "アクチュエーター",
                                                            "Fork2": "セレクターフォーク", "DogHub3": "ドッグハブ"}, group=G7)
 qm.catalog("diff", "かさ歯車とデフ", "出力軸のピニオン（12 歯）とクラウン（36 歯）で 90° 曲げ、デフで左右へ分ける。", parts=["BevelPinion", "CrownWheel", "Diff", "Brg_Diff"],
            labels={"BevelPinion": "ピニオン", "CrownWheel": "クラウンギア", "Diff_Case": "デフケース", "Brg_DiffR": "軸受"}, group=G7)
@@ -626,7 +635,7 @@ qm.catalog("sec_engine", "エンジンの断面（左の 2 番シリンダー）
 qm.catalog("sec_gearbox", "ギアボックスの断面（中心）", "車の中心（X = 0）で縦に切った断面。クラッチから入力軸・出力軸の 8 組の歯車、"
            "かさ歯車でデフへ。ケースは中の詰まった立体で作っているので、切り口の上に中の部品が重なる。",
            parts=["Gearbox", "Clutch", "InputShaft", "OutputShaft", "Gear1_", "Gear2_", "Gear3_", "Gear4_", "Gear5_", "Gear6_", "Gear7_", "Gear8_",
-                  "DogHub", "BevelPinion", "CrownWheel", "Diff", "Brg_"],
+                  "DogHub", "BevelPinion", "CrownWheel", "Diff", "Brg_", "NeedleBrg", "ClutchSlave"],
            labels={"Clutch_Basket": "クラッチ", "InputShaft": "入力軸", "OutputShaft": "出力軸", "Gear1_Out": "1 速", "CrownWheel": "クラウンギア",
                    "Diff_Case": "デフ", "Gearbox": "ケース"}, group=G9, section=("X", 0.0))
 qm.catalog("sec_chassis", "シャシーの断面（燃料タンクの位置）", "Y = 2,000mm で切り、前から見た断面。サバイバルセルの殻の中に燃料セルと、その下のエネルギーストア。"

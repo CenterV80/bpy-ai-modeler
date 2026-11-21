@@ -802,6 +802,22 @@ def selector_fork(name: str, shaft_r: float, barrel_at, mats=None):
     return parts
 
 
+def needle_bearing(name: str, r_in: float, r_out: float, width: float, n: int = 14, mats=None):
+    """ニードル軸受（細いころ n 本と、両端の保持器の輪）。軸 Z、中心が原点。空転するギアと軸の間に入れる。戻り値はリスト"""
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    rr = (r_out - r_in) / 2 * 0.95
+    rm = (r_in + r_out) / 2
+    parts = []
+    for k in range(n):
+        a = 2 * math.pi * k / n
+        parts.append(qm.cylinder(f"{name}_Roller{k + 1}", rr, width * 0.8, seg=8, origin="center",
+                                 location=(rm * math.cos(a), rm * math.sin(a), 0), material=steel))
+    for s, t in ((-1, "A"), (1, "B")):
+        parts.append(qm.ring(f"{name}_Cage{t}", rm + rr * 0.6, rm - rr * 0.6, width * 0.1, seg=24, origin="center",
+                             location=(0, 0, s * width * 0.45), material=steel))
+    return parts
+
+
 def differential(name: str = "Diff", case_r: float = 0.060, case_len: float = 0.15, mats=None):
     """デフ（ケース、両側の出力フランジ）。軸 Z、中心が原点（左右の車軸の向き）。戻り値はリスト"""
     ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
@@ -2026,7 +2042,7 @@ HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でその
 - f1.driveshaft(name, p_in, p_out) / f1.anti_roll_bar(name, center, half)   等速ジョイントとブーツ付きのドライブシャフト / アンチロールバー
 - ギアボックスの中身（軸 Z・原点に作るので qm.orient で据える）: f1.clutch()（多板クラッチ）、f1.dog_hub(name)（ドッグハブ）、
   f1.shift_barrel(tracks=[...])（シフトドラム）、f1.selector_fork(name, shaft_r, barrel_at)（フォーク）、f1.differential()（デフ）。
-  歯車は qm.gear / qm.bevel_gear、軸受は qm.ball_bearing
+  歯車は qm.gear / qm.bevel_gear、軸受は qm.ball_bearing、空転するギアの下は f1.needle_bearing(name, r_in, r_out, width)
 
 シャシー全体（車体を除く。位置は f1.LAYOUT のミリの値。図鑑の作例 skills/bpy-modeling/examples/f1_chassis_catalog_mm.py）
 - f1.survival_cell() / f1.tub_section(y_mm) → (幅, 上端 z)   足もとからエンジンの前までの殻・上ぶた・隔壁・ダッシュボードの梁

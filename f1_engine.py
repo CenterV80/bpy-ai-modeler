@@ -21,7 +21,7 @@ import f1
 
 __all__ = ["v6_frame", "v6_mains", "v6_block", "v6_heads", "v6_head_gaskets", "v6_cam_covers", "v6_front_cover",
            "v6_sump", "v6_crankshaft", "v6_conrods", "v6_pistons", "v6_valves", "v6_camshafts", "v6_studs",
-           "v6_plugs_injectors", "v6_pumps", "v6_engine_real"]
+           "v6_plugs_injectors", "v6_pumps", "v6_oil_jets", "v6_engine_real"]
 
 MM = 0.001
 
@@ -766,12 +766,30 @@ def v6_pumps(mats=None):
     return parts
 
 
+def v6_oil_jets(mats=None):
+    """ピストンを下から冷やすオイルジェット 6 本（クランク室の壁の取り付け台から、ピストンの裏へ向けた細い管）"""
+    m = _mats(mats)
+    parts = []
+    for bank, tg in ((-1, "L"), (1, "R")):
+        objs = []
+        for i, y in enumerate([y for b, k, y in f1.v6_cylinders() if b == bank]):
+            base = Vector((_lx(bank, -46), y + 22, 40))           # ブロックの下、バンクの外寄り
+            tip = Vector((_lx(bank, -30), y + 14, 56))
+            objs.append(_box(f"Engine_OilJet{tg}{i + 1}_Mount", base.x - 6, base.x + 6, base.y - 6, base.y + 6, base.z - 8, base.z, material=m["steel"]))
+            tube = qm.tube(f"Engine_OilJet{tg}{i + 1}", [base * MM, (base + Vector((0, -4, 10))) * MM, tip * MM], radius=0.0025, seg=10,
+                           material=m["steel"])
+            f1.hollow(tube, [base * MM, (base + Vector((0, -4, 10))) * MM, tip * MM], 0.0025, 0.0007)
+            objs.append(tube)
+        parts += _bank_place(objs, bank)
+    return parts
+
+
 def v6_engine_real(crank_deg: float = 30.0, mats=None):
     """V6 エンジンを実物どおりの部品で組み立てる（ブロック・ベッドプレート・ヘッド・ガスケット・カバー・オイルパン・
     クランク・コンロッド・ピストン・バルブ・カム・スタッド・プラグ・インジェクター・ポンプ）。戻り値は部品のリスト"""
     parts = []
     for fn in (v6_block, v6_heads, v6_head_gaskets, v6_cam_covers, v6_front_cover, v6_sump, v6_studs, v6_plugs_injectors, v6_pumps,
-               v6_valves, v6_camshafts):
+               v6_valves, v6_camshafts, v6_oil_jets):
         parts += fn(mats=mats)
     parts += v6_crankshaft(crank_deg, mats=mats)
     parts += v6_conrods(crank_deg, mats=mats)

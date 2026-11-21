@@ -713,6 +713,12 @@ def _boolean(target, others, op: str):
         size = max(max(v.co[i] for v in bm.verts) - min(v.co[i] for v in bm.verts) for i in range(3)) or 1.0
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=size * 2e-5)
         bmesh.ops.dissolve_degenerate(bm, edges=bm.edges, dist=size * 2e-5)
+        loose = [e for e in bm.edges if not e.link_faces]           # 面につながらない辺と頂点も消す
+        if loose:
+            bmesh.ops.delete(bm, geom=loose, context="EDGES")
+        lv = [v for v in bm.verts if not v.link_edges]
+        if lv:
+            bmesh.ops.delete(bm, geom=lv, context="VERTS")
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     bm.to_mesh(me)
     bm.free()
