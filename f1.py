@@ -1246,7 +1246,37 @@ def fuel_cell(name: str = "FuelCell", y0: float = 1.88, y1: float = 2.24, half_w
     ym = (y0 + y1) / 2
     hatch = qm.cylinder(f"{name}_Hatch", 0.07, 0.010, seg=24, location=(0, ym, z1 - 0.002), material=alu)
     pump = qm.cylinder(f"{name}_Pump", 0.04, 0.12, seg=16, location=(0, ym, z0 + 0.003), material=alu)
-    return [cell, hatch, pump]
+    parts = [cell, hatch, pump]
+    if HOLLOW:
+        # 袋は厚み 3mm のゴム。中に、底の集油槽（コレクター）とその中のメインポンプ、左右の隅から集油槽へ送るリフトポンプ、
+        # 燃料の流量計（FIA の指定品・超音波式。タンクの中に付ける）、フィルター、燃料の量の計測棒。配置と寸法は推定
+        w = 0.003
+        inner = body("_fci", [(y0 + w, 0, z0 + 0.01 + w, half_w * 2 - 0.04 - 2 * w, h - 0.02 - 2 * w, 0.06),
+                              (y0 + 0.02 + w, 0, z0 + w, half_w * 2 - 2 * w, h - 2 * w, 0.07),
+                              (y1 - 0.02 - w, 0, z0 + w, half_w * 2 - 2 * w, h - 2 * w, 0.07),
+                              (y1 - w, 0, z0 + 0.01 + w, half_w * 2 - 0.04 - 2 * w, h - 0.02 - 2 * w, 0.06)], None, n=3)
+        qm.cut(cell, [inner, qm.cylinder("_fch", 0.06, 0.02, seg=24, location=(0, ym, z1 - 0.012))])
+        col = qm.box(f"{name}_Collector", (0.24, 0.18, 0.10), origin="bottom", location=(0, ym, z0 + w), material=alu)
+        qm.cut(col, [qm.box("_coli", (0.236, 0.176, 0.10), origin="bottom", location=(0, ym, z0 + w + 0.002)),
+                     qm.cylinder("_colp", 0.012, 0.03, seg=12, axis="X", location=(0.12, ym, z0 + 0.02)),
+                     qm.cylinder("_colq", 0.012, 0.03, seg=12, axis="X", location=(-0.12, ym, z0 + 0.02))])
+        parts.append(col)
+        for s_, tg in ((-1, "L"), (1, "R")):
+            lp = qm.cylinder(f"{name}_LiftPump{tg}", 0.016, 0.050, seg=16, axis="X", location=(s_ * (half_w - 0.06), ym, z0 + w + 0.018), material=alu)
+            ln = qm.tube(f"{name}_LiftLine{tg}", [(s_ * (half_w - 0.085), ym, z0 + 0.021), (s_ * 0.105, ym, z0 + 0.021)], radius=0.006, seg=10,
+                         material=qm.material("F1_PipeFuel", (0.55, 0.12, 0.10), metal=0.0, rough=0.6))
+            parts += [lp, ln]
+        fm = qm.cylinder(f"{name}_FlowMeter", 0.018, 0.090, seg=16, axis="Y", location=(0.07, ym, z0 + w + 0.120), material=alu)
+        fl = qm.cylinder(f"{name}_Filter", 0.020, 0.060, seg=16, axis="Y", location=(-0.07, ym, z0 + w + 0.120), material=alu)
+        lvl = qm.cylinder(f"{name}_LevelSensor", 0.006, h - 0.06, seg=12, location=(-0.16, ym + 0.12, z0 + w), material=alu)
+        cross = qm.tube(f"{name}_FeedLine", [(-0.07, ym + 0.030, z0 + 0.123), (-0.07, ym + 0.05, z0 + 0.123), (0.07, ym + 0.05, z0 + 0.123),
+                                              (0.07, ym + 0.045, z0 + 0.123)], radius=0.006, seg=10,
+                        material=qm.material("F1_PipeFuel", (0.55, 0.12, 0.10), metal=0.0, rough=0.6))
+        out = qm.tube(f"{name}_OutLine", [(0.07, ym - 0.045, z0 + 0.123), (0.07, ym - 0.08, z0 + 0.13), (0.25, y1 - 0.06, z1 - 0.09),
+                                            (0.25, y1 - 0.04, z1 - 0.08)], radius=0.006, seg=10,
+                      material=qm.material("F1_PipeFuel", (0.55, 0.12, 0.10), metal=0.0, rough=0.6))
+        parts += [fm, fl, lvl, cross, out]
+    return parts
 
 
 def energy_store(name: str = "ES", y0: float = 1.88, y1: float = 2.24, width: float = 0.56, z0: float = 0.073,
@@ -1263,6 +1293,37 @@ def energy_store(name: str = "ES", y0: float = 1.88, y1: float = 2.24, width: fl
     for k, x in enumerate((-width * 0.3, width * 0.3)):
         parts.append(qm.cylinder(f"{name}_HVConnector{k + 1}", 0.018, 0.03, seg=12, axis="Y", location=(x, y1 + 0.012, z0 + h * 0.5),
                                  material=orange))
+    if HOLLOW:
+        # 中：4 つのモジュール（それぞれ薄い板状の電池セルを並べ、両端の押さえ板、上の銅のバスバー、電池を見張る基板）と、
+        # モジュールをつなぐ太いバスバー。セルの形（板状）と数・並べ方は推定（公表されていない）
+        w_ = 0.0075
+        qm.cut(box, [qm.box("_esi", (width - 2 * w_, L - 2 * w_, h - 2 * w_), origin="bottom", location=(0, (y0 + y1) / 2, z0 + w_))])
+        cell_m = qm.material("F1_Cell", (0.55, 0.58, 0.62), metal=0.6, rough=0.4)
+        cu = qm.material("F1_Copper", (0.80, 0.45, 0.20), metal=1.0, rough=0.3)
+        pcb = qm.material("F1_PCB", (0.05, 0.35, 0.12), metal=0.1, rough=0.6)
+        nmod = 4
+        gap = 0.006
+        mod_l = (L - 2 * w_ - gap * (nmod + 1)) / nmod
+        ch = h - 2 * w_ - 0.024
+        pitch = 0.0062
+        ncell = int((width - 2 * w_ - 0.030) / pitch)
+        cell_me = fasten.proto_mesh(f"_escell_{round(mod_l, 4)}_{round(ch, 4)}",
+                                    lambda nm: qm.box(nm, (pitch - 0.0007, mod_l - 0.004, ch), origin="bottom", material=cell_m))
+        for m in range(nmod):
+            ym = y0 + w_ + gap + mod_l / 2 + m * (mod_l + gap)
+            for c in range(ncell):
+                x = -(ncell - 1) * pitch / 2 + c * pitch
+                parts.append(fasten.place(f"{name}_Module{m + 1}_Cell{c + 1}", cell_me, fasten.frame((x, ym, z0 + w_ + 0.004), (0, 0, 1), (1, 0, 0)),
+                                          "cell"))
+            for e, sx in enumerate((-1, 1)):
+                parts.append(qm.box(f"{name}_Module{m + 1}_EndPlate{e + 1}", (0.008, mod_l, ch + 0.004), origin="bottom",
+                                    location=(sx * ((ncell * pitch) / 2 + 0.005), ym, z0 + w_ + 0.002), material=alu))
+            parts.append(qm.box(f"{name}_Module{m + 1}_Busbar", (ncell * pitch, 0.012, 0.002), origin="bottom",
+                                location=(0, ym, z0 + w_ + 0.004 + ch), material=cu))
+            parts.append(qm.box(f"{name}_Module{m + 1}_BMS", (ncell * pitch * 0.6, mod_l * 0.5, 0.0016), origin="bottom",
+                                location=(0, ym + mod_l * 0.2, z0 + w_ + 0.004 + ch + 0.002), material=pcb))
+        parts.append(qm.box(f"{name}_MainBusbar", (0.010, L - 2 * w_ - 0.01, 0.003), origin="bottom",
+                            location=(width * 0.3, (y0 + y1) / 2, z0 + w_ + 0.004 + ch + 0.002), material=cu))
     return parts
 
 
@@ -1281,6 +1342,27 @@ def control_electronics(name: str = "CE", center=(0.16, 2.33, 0.073), size=(0.18
                              material=orange))
     parts.append(qm.cylinder(f"{name}_CoolPort", 0.010, 0.03, seg=10, axis="Y", location=(cx + w * 0.25, cy + d / 2 + 0.012, cz + h * 0.7),
                              material=alu))
+    if HOLLOW:
+        # 中：水冷の板の上に、MGU-K を回すインバーターのパワーモジュール 3 つ（三相）、直流のコンデンサー、
+        # 三相のバスバー、低い電圧（12〜24V）を作る DC-DC コンバーター、上に制御の基板。配置と寸法は推定
+        w_ = 0.0065
+        qm.cut(parts[0], [qm.box("_cei", (w - 2 * w_, d - 2 * w_, h - 2 * w_), origin="bottom", location=(cx, cy, cz + w_))])
+        cu = qm.material("F1_Copper", (0.80, 0.45, 0.20), metal=1.0, rough=0.3)
+        pcb = qm.material("F1_PCB", (0.05, 0.35, 0.12), metal=0.1, rough=0.6)
+        dark = qm.material("F1_Module", (0.10, 0.10, 0.11), metal=0.2, rough=0.5)
+        z = cz + w_
+        parts.append(qm.box(f"{name}_ColdPlate", (w - 2 * w_ - 0.002, d - 2 * w_ - 0.002, 0.010), origin="bottom", location=(cx, cy, z), material=alu))
+        z += 0.010
+        for k in range(3):
+            parts.append(qm.box(f"{name}_PowerModule{k + 1}", (0.040, 0.060, 0.012), origin="bottom",
+                                location=(cx - w / 2 + 0.030 + k * 0.045, cy - 0.020, z), material=dark))
+            parts.append(qm.box(f"{name}_PhaseBusbar{k + 1}", (0.006, 0.050, 0.003), origin="bottom",
+                                location=(cx - w / 2 + 0.030 + k * 0.045, cy + 0.030, z + 0.004), material=cu))
+        parts.append(qm.cylinder(f"{name}_DCLink", 0.020, 0.050, seg=20, location=(cx + w * 0.30, cy + 0.030, z), material=dark))
+        parts.append(qm.box(f"{name}_DCDC", (0.040, 0.040, 0.030), origin="bottom", location=(cx + w * 0.28, cy - 0.035, z), material=dark))
+        for k, zz in enumerate((z + 0.060, z + 0.095)):
+            parts.append(qm.box(f"{name}_Board{k + 1}", (w - 2 * w_ - 0.010, d - 2 * w_ - 0.010, 0.0016), origin="bottom",
+                                location=(cx, cy, zz), material=pcb))
     return parts
 
 
@@ -1625,6 +1707,38 @@ def radiator(name: str, length: float = 0.50, height: float = 0.36, thickness: f
     parts.append(qm.cylinder(f"{name}_Inlet", 0.020, 0.04, seg=12, location=(0, length / 2 + 0.0175, height / 2), material=alu))
     parts.append(qm.cylinder(f"{name}_Outlet", 0.020, 0.04, seg=12, origin="top", location=(0, -length / 2 - 0.0175, -height / 2),
                              material=alu))
+    if HOLLOW:
+        # コアの中：前後のタンクの間を渡す平たいチューブ（冷やす液や空気が通る）と、チューブの間の波形のフィン（風が通る）。
+        # コアの上下は側板だけ残す。タンクも中を空にする。チューブの間隔（10mm）とフィンの波の間隔は推定
+        qm.cut(core, [qm.box("_cc", (thickness + 0.01, length + 0.01, height - 0.006), origin="center")])
+        for k, t in enumerate(("Front", "Rear")):
+            tk = parts[1 + k]
+            s = -1 if t == "Front" else 1
+            qm.cut(tk, [qm.box("_tk", (thickness + 0.004, 0.027, height + 0.002), origin="center", location=(0, s * (length / 2 + 0.0175), 0))])
+        pitch = 0.010
+        n = max(2, int((height - 0.006) / pitch))
+        pitch = (height - 0.006) / n
+        tube_t = 0.0022
+        z0 = -height / 2 + 0.003
+        tube_me = fasten.proto_mesh(f"_radtube_{round(thickness, 4)}_{round(length, 4)}",
+                                    lambda nm: qm.box(nm, (thickness * 0.92, length + 0.004, tube_t), origin="center", material=alu))
+        fh = pitch - tube_t - 0.0004
+        wave = 0.010
+        nz = max(2, int(length / wave))
+        path = []
+        for i in range(nz * 2 + 1):
+            yy = -length / 2 + length * i / (nz * 2)
+            path.append((0, yy, (fh / 2 - 0.0003) * (1 if i % 2 else -1)))
+        fin_me = fasten.proto_mesh(f"_radfin_{round(thickness, 4)}_{round(length, 4)}_{round(fh, 4)}",
+                                   lambda nm: qm.sweep(nm, path, [(-0.0002, -thickness * 0.45), (0.0002, -thickness * 0.45),
+                                                                  (0.0002, thickness * 0.45), (-0.0002, thickness * 0.45)],
+                                                       up=(1, 0, 0), material=core_m))
+        for k in range(n + 1):
+            zt = z0 + pitch * k
+            if k < n + 1 and 0 < k < n:
+                parts.append(fasten.place(f"{name}_Tube{k}", tube_me, fasten.frame((0, 0, zt), (0, 0, 1), (1, 0, 0)), "core"))
+            if k < n:
+                parts.append(fasten.place(f"{name}_Fin{k + 1}", fin_me, fasten.frame((0, 0, zt + pitch / 2), (0, 0, 1), (1, 0, 0)), "core"))
     return parts
 
 
@@ -1784,8 +1898,9 @@ def tether(name: str, p0, p1, mats=None):
     return parts
 
 
-def small_box(name: str, center, size, color=(0.15, 0.15, 0.17), connectors: int = 2, mats=None):
-    """電子機器などの小さな箱（角を丸め、前の面にコネクター）。center は底面の中心（メートル）。戻り値はリスト"""
+def small_box(name: str, center, size, color=(0.15, 0.15, 0.17), connectors: int = 2, electronics: bool = True, mats=None):
+    """電子機器などの小さな箱（角を丸め、前の面にコネクター）。center は底面の中心（メートル）。
+    HOLLOW かつ electronics=True なら、中を空にして基板 2 枚と支柱を入れる（弁の箱は electronics=False）。戻り値はリスト"""
     case = qm.material(f"F1_Box{name[:3]}", color, metal=0.5, rough=0.4)
     black = qm.material("F1_Connector", (0.08, 0.08, 0.09), metal=0.1, rough=0.6)
     cx, cy, cz = center
@@ -1795,6 +1910,19 @@ def small_box(name: str, center, size, color=(0.15, 0.15, 0.17), connectors: int
         x = cx - w / 2 + w * (k + 1) / (connectors + 1)
         parts.append(qm.cylinder(f"{name}_Connector{k + 1}", min(0.010, h * 0.25), 0.016, seg=12, axis="Y",
                                  location=(x, cy - d / 2 - 0.006, cz + h / 2), material=black))
+    if HOLLOW and electronics:
+        w_ = min(size) * 0.08 + 0.0015                    # 角の丸みより厚く（中の空洞が角から突き抜けないように）
+        qm.cut(parts[0], [qm.box("_sbi", (w - 2 * w_, d - 2 * w_, h - 2 * w_), origin="bottom", location=(cx, cy, cz + w_))])
+        pcb = qm.material("F1_PCB", (0.05, 0.35, 0.12), metal=0.1, rough=0.6)
+        chip = qm.material("F1_Chip", (0.06, 0.06, 0.07), metal=0.2, rough=0.4)
+        levels = (cz + w_ + h * 0.25, cz + w_ + h * 0.6)
+        for k, zz in enumerate(levels):
+            parts.append(qm.box(f"{name}_Board{k + 1}", (w - 2 * w_ - 0.004, d - 2 * w_ - 0.004, 0.0016), origin="bottom",
+                                location=(cx, cy, zz), material=pcb))
+            parts.append(qm.box(f"{name}_Board{k + 1}_Chip", (w * 0.3, d * 0.3, 0.003), origin="bottom", location=(cx, cy, zz + 0.0016), material=chip))
+        for k, (sx, sy) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1))):
+            parts.append(qm.cylinder(f"{name}_Standoff{k + 1}", 0.0025, levels[1] - cz - w_, seg=8,
+                                     location=(cx + sx * (w / 2 - w_ - 0.006), cy + sy * (d / 2 - w_ - 0.006), cz + w_), material=chip))
     return parts
 
 
@@ -2161,6 +2289,66 @@ HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でその
 
 寸法: f1.SPEC（2026 年規定で確認できた値）、f1.EST（推定値）、f1.BRAKE（ディスクの直径・厚み）。変えたいときは f1.EST["height"] = 0.93 のように上書きしてから作る
 """
+
+
+def sensor(name: str, pos, axis, kind: str = "probe", size: float = 1.0, mats=None):
+    """センサー（本体と、配線をつなぐコネクター）。pos は取り付け面の点、axis は外向き（本体はそちらへ出る）。
+    kind: "probe"（ねじ込みの棒：温度・圧力・ラムダ）、"block"（箱：速度・位置・加速度）、"patch"（貼るもの：ひずみ）、
+    "pot"（ダンパーに沿う直線のポテンショメーター。axis は伸びる向き、size は長さ[m]）。
+    戻り値 (部品のリスト, コネクターの先の点)"""
+    p, a = Vector(pos), Vector(axis).normalized()
+    blk = qm.material("F1_Sensor", (0.12, 0.12, 0.13), metal=0.3, rough=0.5)
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    con_m = qm.material("F1_Connector", (0.08, 0.08, 0.09), metal=0.1, rough=0.6)
+    parts = []
+    if kind == "probe":
+        hexp = qm.nut(f"{name}", 0.010 * size, s=0.014 * size, m=0.008 * size, material=steel)
+        hexp.matrix_world = fasten.frame(p, a)
+        body_ = qm.cylinder(f"{name}_Body", 0.006 * size, 0.020 * size, seg=12, material=blk)
+        body_.matrix_world = fasten.frame(p + a * 0.008 * size, a)
+        parts += [hexp, body_]
+        tip = p + a * 0.028 * size
+    elif kind == "pot":
+        body_ = qm.cylinder(f"{name}", 0.007, size, seg=12, material=blk)
+        body_.matrix_world = fasten.frame(p, a)
+        parts.append(body_)
+        tip = p + a.orthogonal().normalized() * 0.008
+    elif kind == "patch":
+        body_ = qm.box(f"{name}", (0.012, 0.018, 0.002), origin="bottom", material=blk)
+        body_.matrix_world = fasten.frame(p, a)
+        parts.append(body_)
+        tip = p + a * 0.002
+    else:
+        body_ = qm.box(f"{name}", (0.022 * size, 0.016 * size, 0.014 * size), origin="bottom", material=blk)
+        body_.matrix_world = fasten.frame(p, a)
+        parts.append(body_)
+        tip = p + a * 0.014 * size
+    con = qm.cylinder(f"{name}_Connector", 0.0055, 0.012, seg=12, material=con_m)
+    con.matrix_world = fasten.frame(tip, a)
+    parts.append(con)
+    return parts, tip + a * 0.012
+
+
+def wire_to(name: str, start, loom_points, r: float = 0.0018, mats=None):
+    """センサーのコネクター start から、配線の束（loom_points の折れ線）のいちばん近い点まで、細い線を引く。
+    戻り値は [線]（束に届く所で終わる）"""
+    from mathutils.geometry import intersect_point_line
+    st = Vector(start)
+    best = None
+    for a, b in zip(loom_points, loom_points[1:]):
+        a, b = Vector(a), Vector(b)
+        q, t = intersect_point_line(st, a, b)
+        t = min(1.0, max(0.0, t))
+        q = a + (b - a) * t
+        d = (q - st).length
+        if best is None or d < best[0]:
+            best = (d, q)
+    q = best[1]
+    mid = st + (q - st) * 0.5
+    mid.z = max(mid.z, min(st.z, q.z))
+    pts = [st, st + (mid - st) * 0.3, mid, q]
+    m = qm.material("F1_PipeWire", (0.05, 0.05, 0.05), metal=0.0, rough=0.7)
+    return [qm.tube(name, pts, radius=r, seg=8, material=m)]
 
 
 # 実物どおりの部品の分け方で作る V6 エンジン（ブーリアンを使う。f1_engine.py）
