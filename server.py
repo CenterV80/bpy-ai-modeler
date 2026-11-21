@@ -1060,6 +1060,15 @@ async def page_catalog(_: Request):
     return FileResponse(ROOT / "static" / "catalog.html", headers={"Cache-Control": "no-store"})
 
 
+async def static_js(req: Request):
+    """ページが読み込む JavaScript（static フォルダの .js だけ）"""
+    name = req.path_params["name"]
+    path = ROOT / "static" / name
+    if not name.endswith(".js") or "/" in name or "\\" in name or not path.is_file():
+        return Response(status_code=404)
+    return FileResponse(path, media_type="text/javascript", headers={"Cache-Control": "no-store"})
+
+
 async def page_index(_: Request):
     return FileResponse(ROOT / "static" / "index.html", headers={"Cache-Control": "no-store"})
 
@@ -1102,6 +1111,7 @@ async def api_texture(req: Request):
 VIEW_ROUTES = [
     ("/", page_index),
     ("/catalog", page_catalog),
+    ("/static/{name}", static_js),
     ("/textures/{name}", api_texture),
     ("/api/runs", api_runs),
     ("/api/runs/{run_id:int}", api_run),

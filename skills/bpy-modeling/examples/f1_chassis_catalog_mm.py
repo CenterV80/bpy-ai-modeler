@@ -5,7 +5,7 @@
 # 推定値  : 部品の位置（f1.LAYOUT）と、上に書いた以外の寸法（公表されていない）
 # 確認できた事実（細部）: 1 気筒 4 バルブ・DOHC・空気ばね、直噴（1 気筒 1 本・最大 500bar）
 #           プランクは厚さ 10mm・すり減りの下限 9mm・測る穴は直径 50mm
-# 図鑑    : ビューアーの「図鑑を開く」で、qm.catalog で登録した項目ごとに等角図・三面図・部品表を描く（40 項目）
+# 図鑑    : ビューアーの「図鑑を開く」で、qm.catalog で登録した項目ごとに等角図・三面図・部品表を描く（43 項目）
 qm.units("mm")
 MM = qm.MM
 L = f1.LAYOUT
@@ -615,3 +615,25 @@ qm.catalog("gear_train", "エンジンの前のギア列", "クランクの前�
            parts=["GearTrain", "Crank_Gear", "MGUK_Gear", "MGUK_Idler", "Cam_LInGear", "Cam_LExGear", "Cam_RInGear", "Cam_RExGear"],
            labels={"GearTrain_Crank": "クランクのギア（カム用）", "GearTrain_LIdler1": "アイドラー", "GearTrain_RHeadBig": "頭の複合ギア",
                    "Cam_RInGear": "カムのギア", "MGUK_Gear": "MGU-K のギア", "Crank_Gear": "クランクのギア（MGU-K 用）"}, group=G4)
+
+# ---- 断面図（qm.catalog の section。小さい部品の切り口ほど上に描かれるので、ケースやブロックの中の部品が見える）
+G9 = "断面図"
+yL2 = [y for b, k, y in f1.v6_cylinders() if b < 0 and k == 1][0]
+qm.catalog("sec_engine", "エンジンの断面（左の 2 番シリンダー）", "左の 2 番シリンダーの中心で、前から見た断面。V の内側に吸気（トランペットとプレナム）、"
+           "外側に排気。クランク・コンロッド・ピストン・バルブ・カム・プラグの切り口が、ブロックとヘッドの上に重なる。"
+           "ブロックは中の詰まった立体で作っているので、シリンダーの穴は描かれない。",
+           parts=["Engine_", "Crank_", "Valve_", "Cam_", "Plug_", "Injector_", "FuelRail_", "Intake_", "Exhaust_Primary", "Exhaust_Flange"],
+           labels={"Crank_PistonL2": "ピストン", "Crank_RodL2": "コンロッド", "Valve_L2Ina": "吸気バルブ", "Cam_LEx": "排気のカム",
+                   "Intake_Plenum": "プレナム", "Engine_HeadR": "シリンダーヘッド", "Engine_Sump": "オイルパン"},
+           group=G9, section=("Y", yL2 * MM))
+qm.catalog("sec_gearbox", "ギアボックスの断面（中心）", "車の中心（X = 0）で縦に切った断面。クラッチから入力軸・出力軸の 8 組の歯車、"
+           "かさ歯車でデフへ。ケースは中の詰まった立体で作っているので、切り口の上に中の部品が重なる。",
+           parts=["Gearbox", "Clutch", "InputShaft", "OutputShaft", "Gear1_", "Gear2_", "Gear3_", "Gear4_", "Gear5_", "Gear6_", "Gear7_", "Gear8_",
+                  "DogHub", "BevelPinion", "CrownWheel", "Diff", "Brg_"],
+           labels={"Clutch_Basket": "クラッチ", "InputShaft": "入力軸", "OutputShaft": "出力軸", "Gear1_Out": "1 速", "CrownWheel": "クラウンギア",
+                   "Diff_Case": "デフ", "Gearbox": "ケース"}, group=G9, section=("X", 0.0))
+qm.catalog("sec_chassis", "シャシーの断面（燃料タンクの位置）", "Y = 2,000mm で切り、前から見た断面。サバイバルセルの殻の中に燃料セルと、その下のエネルギーストア。"
+           "左右のサイドポッドにインタークーラーとオイルクーラー。",
+           parts=["Cell", "FuelCell", "ES", "Intercooler", "OilCooler", "RollHoop", "Halo", "Plank", "Headrest"],
+           labels={"Cell": "サバイバルセル", "FuelCell": "燃料セル", "ES": "エネルギーストア", "Intercooler": "インタークーラー",
+                   "OilCooler": "オイルクーラー", "Plank": "プランク"}, group=G9, section=("Y", 2.0))

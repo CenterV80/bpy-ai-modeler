@@ -30,6 +30,7 @@
   .figs .ortho { display:grid; grid-template-rows:repeat(3, auto); gap:8px; }
   figure { margin:0; border:1px solid var(--line); border-radius:6px; overflow:hidden; background:#fff; }
   figure img { display:block; width:100%; height:auto; }
+  figure.secfig { margin-top:12px; }
   .figs > figure { display:flex; flex-direction:column; justify-content:center; }
   .figs > figure figcaption { margin-top:auto; }
   .figs > figure img { margin-top:auto; }
@@ -59,6 +60,8 @@
   <h1>図鑑</h1>
   <span class="sub" id="title"></span>
   <select id="style"><option value="line">線画</option><option value="color">色つき</option></select>
+  <select id="secSel" title="断面図"><option value="reg">断面図：登録どおり</option><option value="X">断面図：すべて X</option>
+    <option value="Y">断面図：すべて Y</option><option value="Z">断面図：すべて Z</option><option value="none">断面図：なし</option></select>
   <button id="print">印刷・PDF</button>
   <a href="/" class="sub">← ビューアーに戻る</a>
   <span id="progress"></span>
@@ -74,6 +77,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { Section } from '/static/section.js';
 
 const $ = id => document.getElementById(id);
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -82,7 +86,7 @@ const toBl = v => [v.x, -v.z, v.y];                         // three.js → Blen
 const AXIS = v => { const b = toBl(v); const i = [0, 1, 2].reduce((a, k) => Math.abs(b[k]) > Math.abs(b[a]) ? k : a, 0); return 'XYZ'[i]; };
 
 /* ---------------------------------------------------------------- 線画のレンダラー */
-const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true, stencil: true });
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 renderer.setPixelRatio(1);
 const scene = new THREE.Scene();
@@ -93,14 +97,17 @@ const fill = new THREE.MeshLambertMaterial({ color: 0xffffff, polygonOffset: tru
 const edgeMat = new LineMaterial({ color: 0x15171a, linewidth: 1.5 });   // 面の折れ目（30° 以上）の線
 const normalMat = new THREE.MeshNormalMaterial();
 const ghost = new THREE.MeshBasicMaterial({ color: 0xd9dee6, transparent: true, opacity: 0.45, depthWrite: false });
+const idBlack = new THREE.MeshBasicMaterial({ color: 0x000000 });
 
 const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const quadMat = new THREE.ShaderMaterial({
-  uniforms: { tColor: { value: null }, tNormal: { value: null }, tDepth: { value: null }, px: { value: new THREE.Vector2() },
+  uniforms: { tColor: { value: null }, tNormal: { value: null }, tDepth: { value: null }, tId: { value: null }, useId: { value: 0 },
+              px: { value: new THREE.Vector2() },
               nThr: { value: 0.35 }, dThr: { value: 0.003 } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
   fragmentShader: `
-    uniform sampler2D tColor, tNormal, tDepth; uniform vec2 px; uniform float nThr, dThr; varying vec2 vUv;
+    uniform sampler2D tColor, tNormal, tDepth, tId; uniform float useId; uniform vec2 px; uniform float nThr, dThr; varying vec2 vUv;
+    vec3 I(vec2 o){ return texture2D(tId, vUv + o).rgb; }
     float D(vec2 o){ return texture2D(tDepth, vUv + o).x; }
     void main(){
       // 輪郭 = 背景との境目、または奥行きの 2 階差分（平らな面なら斜めでも 0、段差で大きくなる）
@@ -110,6 +117,12 @@ const quadMat = new THREE.ShaderMaterial({
       float e = 0.0;
       if (bg != (l > 0.9999) || bg != (r > 0.9999) || bg != (u > 0.9999) || bg != (b > 0.9999)) e = 1.0;
       else if (!bg) e = step(dThr, max(abs(l + r - 2.0*d), abs(u + b - 2.0*d)));
+      if (useId > 0.5) {                     // 断面：切り口の部品ごとの境目と、切り口の縁
+        vec3 i0 = I(vec2(0.));
+        float di = max(max(distance(i0, I(vec2(-px.x,0.))), distance(i0, I(vec2(px.x,0.)))),
+                       max(distance(i0, I(vec2(0.,px.y))), distance(i0, I(vec2(0.,-px.y)))));
+        e = max(e, step(0.004, di));
+      }
       vec3 c = pow(texture2D(tColor, vUv).rgb, vec3(1.0/2.2));   // 背景は白（薄く描いた周りの部品はそのまま）
       gl_FragColor = vec4(mix(c, vec3(0.07, 0.08, 0.09), e), 1.0);
     }`,
@@ -119,13 +132,16 @@ const quadScene = new THREE.Scene();
 quadScene.add(quad);
 
 function targets(w, h) {
-  const color = new THREE.WebGLRenderTarget(w, h, { samples: 4 });
-  const nd = new THREE.WebGLRenderTarget(w, h);
-  nd.depthTexture = new THREE.DepthTexture(w, h);
-  return { color, nd };
+  const color = new THREE.WebGLRenderTarget(w, h, { samples: 4, stencilBuffer: true });
+  const nd = new THREE.WebGLRenderTarget(w, h, { stencilBuffer: true });
+  nd.depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedInt248Type);
+  nd.depthTexture.format = THREE.DepthStencilFormat;
+  const id = new THREE.WebGLRenderTarget(w, h, { stencilBuffer: true });
+  return { color, nd, id };
 }
 
-let model = null, meshes = [], styleColor = false;
+let model = null, meshes = [], styleColor = false, secMode = 'reg';
+const section = new Section(scene);
 
 function setEdges(on) { for (const m of meshes) for (const c of m.children) if (c.userData.edge) c.visible = on; }
 function inSet(m, set) { let p = m; while (p) { if (set.has(p.name)) return true; p = p.parent; } return false; }
@@ -150,7 +166,7 @@ function boxOf(names) {
 }
 
 /** 正投影で描いて、線画の画像（canvas）と投影用のカメラを返す */
-function draw(box, dir, up, w, h, pad, outer = null) {
+function draw(box, dir, up, w, h, pad, outer = null, sec = false) {
   const c = box.getCenter(new THREE.Vector3());
   const r = box.getSize(new THREE.Vector3()).length() / 2 || 0.01;
   const R = outer ? Math.max(r, outer.distanceToPoint(c) + outer.getSize(new THREE.Vector3()).length() / 2) : r;
@@ -174,27 +190,41 @@ function draw(box, dir, up, w, h, pad, outer = null) {
   renderer.setSize(w, h, false);
   edgeMat.resolution.set(w, h);
   for (const m of meshes) m.material = m.userData.ctx ? ghost : (styleColor ? m.userData.mat : fill);
+  renderer.clippingPlanes = sec ? section.planes : [];
+  section.active = sec; section.sync(); section.mode('hatch');
   setEdges(true);
   for (const m of meshes) if (m.userData.ctx) for (const ch of m.children) ch.visible = false;
   renderer.setRenderTarget(t.color); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.render(scene, cam);
   setEdges(false);
   const ctxOn = meshes.filter(m => m.visible && m.userData.ctx);
   for (const m of ctxOn) m.visible = false;                 // 輪郭は項目の部品だけから取る
-  scene.overrideMaterial = normalMat;
+  if (sec) {                                              // 切り口の板は材質を替えても数え方（ステンシル）を保つ
+    for (const m of meshes) if (!m.userData.ctx) m.material = normalMat;
+    section.mode('normal');
+  } else scene.overrideMaterial = normalMat;
   renderer.setRenderTarget(t.nd); renderer.setClearColor(0x000000, 1); renderer.clear(); renderer.render(scene, cam);
   scene.overrideMaterial = null;
+  if (sec) {                                              // 部品ごとの色で切り口を塗り、境目を取る
+    for (const m of meshes) if (!m.userData.ctx) m.material = idBlack;
+    section.mode('id');
+    renderer.setRenderTarget(t.id); renderer.setClearColor(0x000000, 1); renderer.clear(); renderer.render(scene, cam);
+  }
+  renderer.clippingPlanes = [];
+  section.active = false; section.sync(); section.mode('hatch');
   for (const m of ctxOn) m.visible = true;
   for (const m of meshes) m.material = m.userData.mat;
   Object.assign(quadMat.uniforms.tColor, { value: t.color.texture });
   quadMat.uniforms.tNormal.value = t.nd.texture;
   quadMat.uniforms.tDepth.value = t.nd.depthTexture;
+  quadMat.uniforms.tId.value = t.id.texture;
+  quadMat.uniforms.useId.value = sec ? 1 : 0;
   quadMat.uniforms.px.value.set(1.2 / w, 1.2 / h);
   renderer.setRenderTarget(null); renderer.setClearColor(0xffffff, 1); renderer.clear();
   renderer.render(quadScene, quadCam);
   const cv = document.createElement('canvas');
   cv.width = w; cv.height = h;
   cv.getContext('2d').drawImage(renderer.domElement, 0, 0);
-  t.color.dispose(); t.nd.dispose();
+  t.color.dispose(); t.nd.dispose(); t.id.dispose();
   const project = p => { const v = p.clone().project(cam); return [(v.x + 1) / 2 * w, (1 - v.y) / 2 * h]; };
   // 画面上の点 (x, y) から光線を飛ばし、いちばん手前に当たったものを返す
   const ray = new THREE.Raycaster();
@@ -332,6 +362,29 @@ async function build() {
   $('progress').textContent = `${entries.length} 項目`;
 }
 
+/** 断面図。e.section（"X" / "Y" / "Z" か [軸, 位置 m]）か、上のメニューの指定で、項目の部品を平面で切って描く */
+const SEC = { X: { v: V(1, 0, 0), up: V(0, 1, 0), sign: 1, from: '+X 側から' }, Y: { v: V(0, 0, 1), up: V(0, 1, 0), sign: -1, from: '-Y 側（前）から' },
+              Z: { v: V(0, 1, 0), up: V(0, 0, -1), sign: 1, from: '真上から' } };
+function drawSection(e, box, outer) {
+  let spec = secMode === 'reg' ? e.section : (secMode === 'none' ? null : secMode);
+  if (!spec) return null;
+  const [ax, val] = Array.isArray(spec) ? spec : [spec, null];
+  const a = SEC[String(ax).toUpperCase()];
+  if (!a) return null;
+  const c = box.getCenter(new THREE.Vector3());
+  const blC = toBl(c)['XYZ'.indexOf(String(ax).toUpperCase())];
+  const v = val == null ? blC : val;                  // Blender の座標（m）
+  const own = meshes.filter(m => m.visible && !m.userData.ctx);
+  section.build(own, (m, k) => styleColor
+    ? { color: ([].concat(m.userData.mat)[0]?.color || new THREE.Color(0.7, 0.7, 0.7)), ink: new THREE.Color(0.1, 0.1, 0.1) }
+    : { color: new THREE.Color(0.96, 0.96, 0.97), ink: new THREE.Color(0.35, 0.37, 0.40) });
+  section.set(a.v, a.sign * v);
+  const d = draw(box, a.v, a.up, 1100, ratio => Math.min(900, Math.max(420, 1100 / ratio)), 0.18, outer, true);
+  dims(d);
+  section.clear();
+  return { cv: d.cv, cap: `断面図（${String(ax).toUpperCase()} = ${mm(v)} mm の面で切り、${a.from}見る。切り口は斜線、部品ごとに向きを変える）` };
+}
+
 function plate(e, i) {
   const sec = document.createElement('section');
   sec.className = 'plate'; sec.id = `p-${i}`;
@@ -346,6 +399,7 @@ function plate(e, i) {
   const iso = draw(box, V(/left/.test(vw) ? -1 : 1, 0.75, /rear/.test(vw) ? -1.15 : 1.15).normalize(), V(0, 1, 0), 1100, a => Math.min(1250, Math.max(560, 1100 / a)), 0.26, outer);
   callouts(iso, e.labels || []);
   const orthos = VIEWS.map(vw => { const d = draw(box, vw.dir, vw.up, 620, 400, 0.22, outer); dims(d); return { ...d, cap: vw.cap }; });
+  const secFig = drawSection(e, box, outer);
   const s = box.getSize(new THREE.Vector3());
   const rows = (e.labels || []).map(l => {
     const b = boxOf(l.objects), z = b.getSize(new THREE.Vector3());
@@ -359,14 +413,22 @@ function plate(e, i) {
       <figure><img alt="等角図"><figcaption>等角図（${/rear/.test(e.view || '') ? '後ろ' : '前'}${/left/.test(e.view || '') ? '左' : '右'}の上から。引き出し線は主な部品）</figcaption></figure>
       <div class="ortho">${orthos.map(o => `<figure><img alt="${esc(o.cap)}"><figcaption>${esc(o.cap)}　寸法は mm</figcaption></figure>`).join('')}</div>
     </div>
+    ${secFig ? `<figure class="secfig"><img alt="断面図"><figcaption>${esc(secFig.cap)}</figcaption></figure>` : ''}
     ${rows ? `<table><thead><tr><th>部品</th><th>オブジェクト数</th><th>大きさ X × Y × Z（mm）</th></tr></thead><tbody>${rows}</tbody></table>` : ''}`;
   const imgs = sec.querySelectorAll('img');
   imgs[0].src = iso.cv.toDataURL('image/png');
   orthos.forEach((o, k) => { imgs[k + 1].src = o.cv.toDataURL('image/png'); });
+  if (secFig) sec.querySelector('.secfig img').src = secFig.cv.toDataURL('image/png');
   return sec;
 }
 
 $('print').onclick = () => print();
+$('secSel').onchange = async () => {
+  secMode = $('secSel').value;
+  $('plates').innerHTML = '<p class="empty">描き直しています…</p>';
+  scene.remove(model); meshes = []; model = null;
+  await build();
+};
 $('style').onchange = async () => {
   styleColor = $('style').value === 'color';
   $('plates').innerHTML = '<p class="empty">描き直しています…</p>';

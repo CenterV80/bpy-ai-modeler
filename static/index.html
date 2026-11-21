@@ -20,6 +20,11 @@
   #hint { position:absolute; left:10px; bottom:10px; font-size:12px; color:var(--sub); pointer-events:none; }
   #views { position:absolute; left:10px; top:84px; display:flex; gap:4px; flex-wrap:wrap; }
   #views button { padding:3px 9px; font-size:12px; }
+  #secBox { display:flex; gap:6px; align-items:center; background:rgba(17,19,24,.75); border:1px solid var(--line); border-radius:6px; padding:2px 8px; }
+  #secBox select { background:#2a2f39; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:2px 4px; font:inherit; font-size:12px; }
+  #secPos { width:160px; }
+  #secPos[hidden], #secInfo:empty { display:none; }
+  #secInfo { font:12px ui-monospace,Menlo,Consolas,monospace; color:var(--text); }
   #readout { position:absolute; left:10px; bottom:32px; font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; color:var(--text);
     background:rgba(17,19,24,.75); padding:3px 8px; border-radius:6px; pointer-events:none; }
   #readout:empty, #measure:empty { display:none; }
@@ -104,6 +109,12 @@
       <button data-view="right" title="正投影（+X 側から）">右</button>
       <button data-view="top" title="正投影（真上から）">上</button>
       <button id="tMeasure" title="2 点をクリックして距離を測る（Esc で消す）">測る</button>
+      <span id="secBox" title="平面で切って、切り口を斜線で塗る（手前側を消す）">
+        <label for="secAxis">断面</label>
+        <select id="secAxis"><option value="">なし</option><option value="X">X で切る</option><option value="Y">Y で切る</option><option value="Z">Z で切る</option></select>
+        <input type="range" id="secPos" min="0" max="1" step="0.0001" hidden>
+        <span id="secInfo"></span>
+      </span>
     </div>
     <div id="measure"></div>
     <div id="readout"></div>
@@ -189,12 +200,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { Section } from '/static/section.js';
 
 const $ = id => document.getElementById(id);
 
 /* ---------------------------------------------------------------- three.js */
 const view = $('view');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });   // stencil は断面の切り口に使う
+renderer.localClippingEnabled = true;
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 view.prepend(renderer.domElement);
 
@@ -267,7 +280,55 @@ function resize() {
   fitOrtho();
 }
 new ResizeObserver(resize).observe(view);
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+renderer.setAnimationLoop(() => { controls.update(); if (section.active) section.sync(!!shaded?.visible); renderer.render(scene, camera); });
+
+/* ---------------------------------------------------------------- 断面 */
+// 断面の軸（Blender の X・Y・Z）→ three.js で「消す側」の向きと、位置の符号。Y で切ると前（-Y）側を消して前から見る
+const SEC_AXIS = { X: { v: new THREE.Vector3(1, 0, 0), sign: 1, idx: 0 }, Y: { v: new THREE.Vector3(0, 0, 1), sign: -1, idx: 1 },
+                   Z: { v: new THREE.Vector3(0, 1, 0), sign: 1, idx: 2 } };
+const section = new Section(scene);
+let secBuilt = null;
+let clipOn = null;
+function clipMaterials(on, force = false) {
+  if (on === clipOn && !force) return;        // 切り替えたときだけ（材質の作り直しは重いので）
+  clipOn = on;
+  const mats = new Set([clay]);
+  shaded?.traverse(o => { if (o.isMesh) [].concat(o.userData.orig).forEach(m => mats.add(m)); });
+  if (wire) mats.add(wire.material);
+  for (const m of mats) { m.clippingPlanes = on ? section.planes : null; m.needsUpdate = true; }
+}
+function updateSection(rebuild = false) {
+  const ax = $('secAxis').value;
+  const box = modelBox();
+  if (!ax || !shaded || !box) {
+    section.active = false; section.sync(false); clipMaterials(false);
+    $('secPos').hidden = true; $('secInfo').textContent = '';
+    return;
+  }
+  if (rebuild || secBuilt !== shaded) {
+    const meshes = [];
+    shaded.traverse(o => { if (o.isMesh) meshes.push(o); });
+    section.build(meshes, m => {
+      const c = ([].concat(m.userData.orig)[0]?.color || new THREE.Color(0.7, 0.7, 0.7)).clone();
+      return { color: c.clone().lerp(new THREE.Color(1, 1, 1), 0.25), ink: c.clone().multiplyScalar(0.3) };
+    });
+    secBuilt = shaded;
+  }
+  const a = SEC_AXIS[ax];
+  const lo = toBlender(box.min)[a.idx], hi = toBlender(box.max)[a.idx];
+  const [mn, mx] = [Math.min(lo, hi), Math.max(lo, hi)];
+  const sl = $('secPos');
+  if (sl.dataset.axis !== ax || rebuild) {
+    sl.min = mn; sl.max = mx; sl.step = (mx - mn) / 1000 || 0.0001; sl.value = (mn + mx) / 2; sl.dataset.axis = ax;
+  }
+  sl.hidden = false;
+  const v = +sl.value;
+  section.set(a.v, a.sign * v);
+  section.active = true; section.sync(!!shaded.visible); clipMaterials(true, rebuild);
+  $('secInfo').textContent = `${ax} = ${fmt(v)} ${unit}`;
+}
+$('secAxis').onchange = () => updateSection();
+$('secPos').oninput = () => updateSection();
 
 /* ---------------------------------------------------------------- 座標と測定（ミリ） */
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -279,7 +340,7 @@ function pick(ev) {
   const rect = renderer.domElement.getBoundingClientRect();
   ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  const hit = ray.intersectObject(shaded, true).find(h => h.object.isMesh);
+  const hit = ray.intersectObject(shaded, true).find(h => h.object.isMesh && !section.removed(h.point));   // 切って消した側は拾わない
   if (!hit) return null;
   let p = hit.point.clone(), snapped = false;
   if (hit.face) {   // 近くの頂点に吸着（画面上 10px 以内）
@@ -411,6 +472,7 @@ async function loadModel(run) {
   const box = modelBox();
   if (box) setGrid(box.getSize(new THREE.Vector3()).length());
   if (!framed && (shaded || wire)) { frameAll(); framed = true; }
+  if ($('secAxis').value) updateSection(true);
 }
 
 function modelBox() {
