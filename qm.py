@@ -15,7 +15,7 @@ import bpy
 from mathutils import Matrix, Vector
 
 __all__ = ["material", "obj", "box", "cylinder", "lathe", "loft", "sweep", "tube", "quad_sphere", "cap_grid",
-           "circle", "arc", "polygon", "helix", "airfoil", "ring", "nut", "washer", "bolt", "gear", "flange", "wheel",
+           "circle", "arc", "polygon", "helix", "airfoil", "ring", "nut", "washer", "bolt", "gear", "bevel_gear", "ball_bearing", "flange", "wheel",
            "pivot", "orient", "copy", "array", "radial", "mirror", "bevel", "subsurf", "solidify", "expect", "units", "MM", "METRIC", "HELP"]
 
 
@@ -449,6 +449,44 @@ def gear(name: str, teeth: int = 20, module: float = 0.002, width: float = 0.01,
     return _place(obj(name, bm, material), location, rotate)[0]
 
 
+def bevel_gear(name: str, teeth: int = 30, module: float = 0.004, face: float = 0.02, pitch_angle: float = 45.0,
+               material=None, location=(0, 0, 0), rotate=None):
+    """かさ歯車（歯は台形で近似）。軸は Z、外側の端（ヒール）が z=0 で、頂点（軸どうしの交点）は +Z 側。
+    pitch_angle は基準円すいの角度（度）。直交する 2 枚なら、角度の和を 90 にし、
+    ピニオンは atan(z1/z2)、ギアは 90 - それ。基準円の半径 = module × teeth / 2"""
+    rp = module * teeth / 2
+    g = math.radians(pitch_angle)
+    A = rp / math.sin(g)                        # 円すい距離（頂点までの長さ）
+    s = max(0.2, (A - face) / A)                # つま先（内側の端）の縮み
+    a = 2 * math.pi / teeth
+    ra, rf = rp + module, rp - 1.25 * module
+    ring = []
+    for i in range(teeth):
+        for frac, rr in ((-0.25, rf), (-0.12, ra), (0.12, ra), (0.25, rf)):
+            ang = i * a + frac * a
+            ring.append((rr * math.cos(ang), rr * math.sin(ang)))
+    dz = face * math.cos(g)
+    secs = [[(x, y, 0.0) for x, y in ring], [(x * s, y * s, dz) for x, y in ring]]
+    ob = loft(name, secs, material=material)
+    return _place(ob, location, rotate)[0]
+
+
+def ball_bearing(name: str, d_in: float, d_out: float, width: float, balls: int = 10, material=None,
+                 location=(0, 0, 0), rotate=None):
+    """玉軸受（内輪・外輪・玉）。軸は Z、中心が原点。戻り値 [内輪, 外輪, 玉...]"""
+    ri, ro = d_in / 2, d_out / 2
+    t = (ro - ri) * 0.22
+    inner = ring(f"{name}_Inner", ri + t, ri, width, seg=24, origin="center", material=material)
+    outer = ring(f"{name}_Outer", ro, ro - t, width, seg=24, origin="center", material=material)
+    pr, br = (ri + ro) / 2, (ro - ri - 2 * t) / 2 * 1.02   # 玉は内輪・外輪に少し触れる大きさ
+    parts = [inner, outer]
+    for k in range(balls):
+        ang = 2 * math.pi * k / balls
+        parts.append(quad_sphere(f"{name}_Ball{k + 1}", 2 * br, n=2, material=material,
+                                 location=(pr * math.cos(ang), pr * math.sin(ang), 0)))
+    return _place(parts, location, rotate)
+
+
 def flange(name: str, r_in: float, r_out: float, thickness: float, bolts: int = 4, bolt_size="M8",
            material=None, bolt_material=None, location=(0, 0, 0), rotate=None):
     """フランジ（穴あきの円盤）と、上面の円周に並べたボルト。戻り値は [フランジ, ボルト...]"""
@@ -639,6 +677,8 @@ HELP = """qm（四角ポリゴン主体のモデリング用の関数。run_scri
 - qm.nut(name, "M8") / qm.washer(name, "M8")   六角ナット（ISO 4032 の寸法） / 平座金（おおよその寸法）
 - qm.ring(name, r_out, r_in, h, seg=16)   穴のあいた円柱（カラー・管の一部・リム）
 - qm.gear(name, teeth=20, module=0.002, width=0.01, bore=None)   平歯車（基準円の直径 = module × teeth）
+- qm.bevel_gear(name, teeth, module, face, pitch_angle)   かさ歯車（直交 2 枚は角度の和 90。頂点は +Z 側）
+- qm.ball_bearing(name, d_in, d_out, width, balls=10)   玉軸受（内輪・外輪・玉）→ リスト
 - qm.flange(name, r_in, r_out, thickness, bolts=4, bolt_size="M8")   フランジとボルト → [フランジ, ボルト...]
 - qm.wheel(name, radius=0.33, width=0.22, spokes=5, rotate=(90,0,0))   タイヤ・リム・ハブ・スポーク → リスト
 - qm.lathe(..., closed=True)   断面を閉じた輪として回す（タイヤ・Oリング・ドーナツ）

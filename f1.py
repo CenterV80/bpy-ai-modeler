@@ -670,6 +670,104 @@ def anti_roll_bar(name: str, center, half: float, arm: float = 0.07, r: float = 
     return [bar] + arms
 
 
+# ---------------------------------------------------------------- ギアボックスの中身
+# 確認できた事実: 前進 8 段（2014 年から）、シームレスシフト（シフトドラムの溝でフォークを動かす）、
+#   クラッチはカーボンの多板で直径およそ 100mm、最終減速はかさ歯車で差動制限付きのデフ（油圧制御）へ。
+# 推定: 軸間距離・歯車の幅・モジュール・歯数・軸受やデフの寸法（規定の数値は確かめられなかった）。
+# どの部品も軸 Z・原点中心で作るので、qm.orient で据える
+
+
+def clutch(name: str = "Clutch", plates: int = 4, d: float = 0.100, mats=None):
+    """カーボンの多板クラッチ（外側のバスケット、摩擦板と鋼の板を交互、押し付け板、ハブ）。
+    直径 d（外径）。軸 Z、エンジン側の端が z=0、+Z へ積む。戻り値はリスト"""
+    carbon = _mk(mats, "carbonbrake", (0.06, 0.06, 0.065), metal=0.1, rough=0.7)
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
+    r = d / 2
+    t_f, t_s = 0.0030, 0.0018
+    z, parts = 0.004, []
+    parts.append(qm.ring(f"{name}_Flywheel", r + 0.008, 0.016, 0.004, seg=32, material=steel))
+    for k in range(plates):
+        parts.append(qm.ring(f"{name}_Friction{k + 1}", r, r * 0.55, t_f, seg=32, location=(0, 0, z), material=carbon))
+        z += t_f
+        if k < plates - 1:
+            parts.append(qm.ring(f"{name}_Steel{k + 1}", r + 0.004, r * 0.62, t_s, seg=32, location=(0, 0, z), material=steel))
+            z += t_s
+    parts.append(qm.ring(f"{name}_PressurePlate", r + 0.004, r * 0.45, 0.005, seg=32, location=(0, 0, z), material=steel))
+    z += 0.005
+    parts.append(qm.ring(f"{name}_Basket", r + 0.010, r + 0.004, z, seg=32, material=ti))
+    parts.append(qm.ring(f"{name}_Hub", r * 0.55, 0.016, z + 0.012, seg=24, material=ti))
+    return parts
+
+
+def dog_hub(name: str, r_in: float = 0.018, r_out: float = 0.032, width: float = 0.016, dogs: int = 6, mats=None):
+    """ドッグハブ（シフトスリーブ。両面のドッグと、フォークがはまる溝）。軸 Z、中心が原点。戻り値はリスト"""
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    w = width
+    parts = [qm.ring(f"{name}_Left", r_out, r_in, w * 0.35, seg=24, location=(0, 0, -w / 2), material=steel),
+             qm.ring(f"{name}_Groove", r_out - 0.004, r_in, w * 0.30, seg=24, location=(0, 0, -w * 0.15), material=steel),
+             qm.ring(f"{name}_Right", r_out, r_in, w * 0.35, seg=24, location=(0, 0, w * 0.15), material=steel)]
+    rm = (r_in + r_out) / 2
+    for side in (-1, 1):
+        for k in range(dogs):
+            a = 2 * math.pi * (k + (0.5 if side > 0 else 0)) / dogs
+            dog = qm.box(f"{name}_Dog{'L' if side < 0 else 'R'}{k + 1}", (0.008, 0.006, 0.004), origin="bottom" if side > 0 else "top",
+                         location=(rm * math.cos(a), rm * math.sin(a), side * w / 2), material=steel)
+            qm.pivot(dog, (rm * math.cos(a), rm * math.sin(a), 0), (0, 0, math.degrees(a)))
+            parts.append(dog)
+    return parts
+
+
+def shift_barrel(name: str = "ShiftBarrel", length: float = 0.22, r: float = 0.024, tracks=(), mats=None):
+    """シフトドラム（溝の付いた円筒）。tracks は溝の位置（z の値、軸方向）。溝は 2 枚のつばの間として表す。
+    軸 Z、手前の端が z=0。後ろに回すアクチュエーターが付く。戻り値はリスト"""
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
+    parts = [qm.cylinder(f"{name}_Drum", r, length, seg=24, material=steel)]
+    for k, z in enumerate(tracks):
+        for j, dz in enumerate((-0.006, 0.003)):
+            parts.append(qm.ring(f"{name}_Track{k + 1}_{'A' if j == 0 else 'B'}", r + 0.004, r - 0.001, 0.003, seg=24,
+                                 location=(0, 0, z + dz), material=steel))
+    parts.append(qm.cylinder(f"{name}_Actuator", r * 1.25, 0.05, seg=24, location=(0, 0, -0.05), material=alu))
+    return parts
+
+
+def selector_fork(name: str, shaft_r: float, barrel_at, mats=None):
+    """セレクターフォーク（ハブの溝を半周はさむ弧と、シフトドラムへ伸びる腕、溝に入るピン）。
+    軸 Z の原点にハブ、barrel_at はドラムの中心（XY 平面上の点、ハブの面 z=0）。戻り値はリスト"""
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    bx, by = barrel_at[0], barrel_at[1]
+    base = math.atan2(by, bx)
+    rc = shaft_r + 0.004
+    secs = []
+    for k in range(13):
+        a = base + math.radians(-100 + 200 * k / 12)
+        ca, sa = math.cos(a), math.sin(a)
+        secs.append([((rc + x) * ca, (rc + x) * sa, z) for x, z in rrect(0.008, 0.004, 0.0015, 1)])
+    parts = [qm.loft(f"{name}_Arc", secs, material=steel)]
+    start = Vector((rc * math.cos(base), rc * math.sin(base), 0))
+    end = Vector((bx, by, 0)) - Vector((bx, by, 0)).normalized() * 0.026
+    parts.append(qm.sweep(f"{name}_Arm", [start, end], [(-0.003, -0.006), (0.003, -0.006), (0.003, 0.006), (-0.003, 0.006)],
+                          up=(0, 0, 1), material=steel))
+    pin = qm.cylinder(f"{name}_Pin", 0.003, 0.006, seg=8, material=steel)
+    qm.orient(pin, origin=end - Vector((bx, by, 0)).normalized() * 0.002, x_axis=(0, 0, 1), z_axis=Vector((bx, by, 0)).normalized())
+    parts.append(pin)
+    return parts
+
+
+def differential(name: str = "Diff", case_r: float = 0.060, case_len: float = 0.15, mats=None):
+    """デフ（ケース、両側の出力フランジ）。軸 Z、中心が原点（左右の車軸の向き）。戻り値はリスト"""
+    ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    h = case_len / 2
+    prof = [(0.022, -h), (case_r * 0.7, -h), (case_r, -h * 0.6), (case_r, h * 0.6), (case_r * 0.7, h), (0.022, h)]
+    parts = [qm.lathe(f"{name}_Case", prof, seg=32, material=ti)]
+    for side in (-1, 1):
+        parts.append(qm.ring(f"{name}_Output{'L' if side < 0 else 'R'}", 0.030, 0.012, 0.040, seg=24,
+                             location=(0, 0, side * h + (0 if side > 0 else -0.040)), material=steel))
+    return parts
+
+
 HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でそのまま使える。前 = -Y、前輪の軸 y=0、上 = Z）
 
 まとめて作る: f1.car(livery=(r,g,b), front_wing_elements=3, wheel_covers=True) → {種類: [オブジェクト...]}
@@ -702,6 +800,9 @@ HELP = """f1（F1 マシン 2026 年規定の部品。run_script の中でその
 - f1.steering_rack(name, center) / f1.tub()   ステアリングラック（蛇腹ブーツ付き）/ モノコックの殻・隔壁・ロールフープ
 - f1.gearbox(y0=2.90) / f1.crash_structure(y0=3.55)   ギアボックスのケースとフランジ / 後ろの衝撃吸収構造
 - f1.driveshaft(name, p_in, p_out) / f1.anti_roll_bar(name, center, half)   等速ジョイントとブーツ付きのドライブシャフト / アンチロールバー
+- ギアボックスの中身（軸 Z・原点に作るので qm.orient で据える）: f1.clutch()（多板クラッチ）、f1.dog_hub(name)（ドッグハブ）、
+  f1.shift_barrel(tracks=[...])（シフトドラム）、f1.selector_fork(name, shaft_r, barrel_at)（フォーク）、f1.differential()（デフ）。
+  歯車は qm.gear / qm.bevel_gear、軸受は qm.ball_bearing
 
 寸法: f1.SPEC（2026 年規定で確認できた値）、f1.EST（推定値）、f1.BRAKE（ディスクの直径・厚み）。変えたいときは f1.EST["height"] = 0.93 のように上書きしてから作る
 """

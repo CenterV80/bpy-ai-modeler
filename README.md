@@ -236,6 +236,12 @@ AI は `f1_help` ツールで使い方を読みます。
 | `f1.rim` / `f1.steering_rack` / `f1.tub` | 18 インチホイール（スポーク付き） / ステアリングラック（蛇腹ブーツ付き） / モノコックの殻・隔壁・ロールフープ |
 | `f1.gearbox` / `f1.crash_structure` | ギアボックスのケースとフランジ / 後ろの衝撃吸収構造 |
 | `f1.driveshaft` / `f1.anti_roll_bar` | 等速ジョイントと蛇腹ブーツ付きのドライブシャフト / アンチロールバー |
+| `f1.clutch` / `f1.dog_hub` | カーボンの多板クラッチ（直径およそ 100mm） / ドッグハブ（両面のドッグとフォークの溝） |
+| `f1.shift_barrel` / `f1.selector_fork` / `f1.differential` | シフトドラム / セレクターフォーク（ドラムの溝に入るピン付き） / デフ（ケースと出力フランジ） |
+
+歯車は `qm.gear`（平歯車）と `qm.bevel_gear`（かさ歯車）、軸受は `qm.ball_bearing`（内輪・外輪・玉）を使います。
+ギアボックスの中身を組んだ例が `skills/bpy-modeling/examples/f1_gearbox_internals_mm.py` にあります
+（前進 8 段・シームレスシフト・カーボン多板クラッチ・かさ歯車でデフへ、は公表されている構成。軸間距離・歯数などは推定）。
 
 部品は原点に作って `qm.orient(部品, origin, x_axis, z_axis)` で据えるか、車の座標の点を直接渡して作ります。
 左前の足まわりを組んだ例が `skills/bpy-modeling/examples/f1_front_corner.py` にあります。
