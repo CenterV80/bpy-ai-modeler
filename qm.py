@@ -16,7 +16,7 @@ from mathutils import Matrix, Vector
 
 __all__ = ["material", "obj", "box", "cylinder", "lathe", "loft", "sweep", "tube", "quad_sphere", "cap_grid",
            "circle", "arc", "polygon", "helix", "airfoil", "ring", "nut", "washer", "bolt", "gear", "bevel_gear", "ball_bearing", "flange", "wheel",
-           "pivot", "orient", "copy", "array", "radial", "mirror", "bevel", "subsurf", "solidify", "expect", "units", "catalog", "MM", "METRIC", "HELP"]
+           "pivot", "orient", "copy", "array", "radial", "mirror", "bevel", "subsurf", "solidify", "expect", "units", "catalog", "cut", "union", "intersect", "cad", "MM", "METRIC", "HELP"]
 
 
 # ---------------------------------------------------------------- マテリアルとオブジェクト
@@ -668,6 +668,88 @@ def catalog(key: str, title: str, description: str = "", parts=None, labels=None
 MM = 0.001  # ミリをメートルに直す係数。寸法をミリで書くときに 120 * qm.MM のように使う
 
 
+# ---------------------------------------------------------------- ブーリアン（立体の足し算・引き算）
+# 鋳物の中の通路（ポート・ウォータージャケット・クランク室）や、ボルト穴・軸の穴を実物どおりにあけるときに使う。
+# 結果の面は多角形・三角形が混ざる（CAD のデータと同じ）。使うときはスクリプトで qm.cad() を呼び、四角形の検査を外す
+
+
+def _boolean(target, others, op: str):
+    others = [o for o in (others if isinstance(others, (list, tuple)) else [others]) if o is not None]
+    if not others:
+        return target
+    col = bpy.data.collections.new("_qm_bool")
+    bpy.context.scene.collection.children.link(col)
+    for o in others:
+        for c in list(o.users_collection):
+            c.objects.unlink(o)
+        col.objects.link(o)
+    mod = target.modifiers.new("qm_bool", "BOOLEAN")
+    mod.operation = op
+    mod.solver = "EXACT"
+    mod.operand_type = "COLLECTION"
+    mod.collection = col
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    me = bpy.data.meshes.new_from_object(target.evaluated_get(dg))
+    old = target.data
+    target.modifiers.remove(mod)
+    if len(me.polygons) == 0 and len(old.polygons) > 0 and op != "INTERSECT":
+        # ブーリアンが失敗して形が消えた（道すじが折り返す管など）。元の形のまま残し、知らせる
+        print(f"注意: {target.name} のブーリアン（{op}）に失敗したので、元の形のまま残しました")
+        bpy.data.meshes.remove(me)
+        me = None
+    if me is None:
+        for o in others:
+            m_ = o.data
+            bpy.data.objects.remove(o)
+            if m_ and m_.users == 0:
+                bpy.data.meshes.remove(m_)
+        bpy.data.collections.remove(col)
+        return target
+    # ブーリアンが残す、ごく近い頂点とつぶれた面を片づける（検査で「重なった頂点」「つぶれた面」にならないように）
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    if bm.verts:
+        size = max(max(v.co[i] for v in bm.verts) - min(v.co[i] for v in bm.verts) for i in range(3)) or 1.0
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=size * 2e-5)
+        bmesh.ops.dissolve_degenerate(bm, edges=bm.edges, dist=size * 2e-5)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(me)
+    bm.free()
+    target.data = me
+    me.name = target.name
+    if old.users == 0:
+        bpy.data.meshes.remove(old)
+    for o in others:
+        m = o.data
+        bpy.data.objects.remove(o)
+        if m and m.users == 0:
+            bpy.data.meshes.remove(m)
+    bpy.data.collections.remove(col)
+    return target
+
+
+def cut(target, cutters):
+    """target から cutters（オブジェクトかリスト）の形を引く。cutters は消える。戻り値は target"""
+    return _boolean(target, cutters, "DIFFERENCE")
+
+
+def union(target, others):
+    """target に others を足して 1 つの部品にする。others は消える"""
+    return _boolean(target, others, "UNION")
+
+
+def intersect(target, other):
+    """target と other の重なった所だけを残す（部品を平面で 2 つに分けるときなど）。other は消える"""
+    return _boolean(target, other, "INTERSECT")
+
+
+def cad(on: bool = True):
+    """CAD のように作る（ブーリアンを使う）モデルでは、四角形の検査（Nゴン・三角形の割合）を外す。
+    閉じているか・法線の向き・重なった頂点などの検査はそのまま"""
+    bpy.context.scene["qm_cad"] = bool(on)
+
+
 def units(u: str = "mm"):
     """報告の単位を切り替える（"mm" か "cm"）。モデル自体の単位はメートルのまま"""
     if u not in ("mm", "cm"):
@@ -719,6 +801,9 @@ HELP = """qm（四角ポリゴン主体のモデリング用の関数。run_scri
 - qm.expect("*", floating=True)   全体が地面に接していなくてよい（タイヤを外した図面用など）。部品どうしのつながりは引き続き見る
 - qm.catalog(key, title, description, parts=[名前や先頭...], labels={先頭: 表示名}, group="章", view="front"|"rear", context=[薄く描く周りの部品], section="X"|"Y"|"Z"|("Y", 位置))
     図鑑の項目を登録する。ビューアーの「図鑑」で、項目ごとに等角図（引き出し線つき）・三面図（寸法線つき）・部品表の 1 枚になる
+- qm.cut(target, [cutters]) / qm.union(target, [others]) / qm.intersect(target, other)
+    ブーリアン（EXACT）で穴・通路・空洞をあける、足す、重なりだけ残す。使う側も消える。結果は多角形が混ざるので qm.cad() と一緒に
+- qm.cad()   四角形の検査（Nゴン・三角形）を外す。鋳物・機械部品を実物どおりに作るとき
 - qm.units("mm")   報告の寸法と位置をミリで出す（精密な部品や図面用）。qm.MM = 0.001 を掛けるとミリで書ける
 
 例:

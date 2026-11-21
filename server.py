@@ -38,7 +38,7 @@ ap = argparse.ArgumentParser(description="bpy モデラー（AI に操作させ�
 ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
 ap.add_argument("--stdio", action="store_true", help="MCP を標準入出力で受ける（Claude Desktop 向け）")
 ap.add_argument("--out", default=os.environ.get("BPY_MODELER_OUT", str(ROOT / "output")), help="結果を保存するフォルダ")
-ap.add_argument("--timeout", type=float, default=float(os.environ.get("BPY_MODELER_TIMEOUT", "60")),
+ap.add_argument("--timeout", type=float, default=float(os.environ.get("BPY_MODELER_TIMEOUT", "240")),
                 help="スクリプト1回の制限時間（秒、macOS / Linux のみ）")
 ARGS = ap.parse_args()
 
@@ -184,7 +184,7 @@ def inspect_scene() -> tuple[dict, list[dict], list[float]]:
             q["max"] = [round(max(v.co[i] for v in bm.verts), 4) for i in range(3)]
             if bm.faces:
                 step = max(1, len(bm.verts) // 3000)
-                GEOM[o.name] = (BVHTree.FromBMesh(bm), [v.co.copy() for v in bm.verts[::step]])
+                GEOM[o.name] = (BVHTree.FromBMesh(bm), [v.co.copy() for v in list(bm.verts)[::step]])
         if bm.verts:
             doubles = bmesh.ops.find_doubles(bm, verts=bm.verts, dist=eps)["targetmap"]
             q["dup_verts"] = len(doubles)
@@ -307,9 +307,10 @@ def problems_of(q: dict, per: list[dict]) -> list[str]:
     p = []
     if q["objects"] == 0 or q["faces"] == 0:
         p.append("メッシュがひとつもない")
-    if q["ngons"]:
+    cad = bool(bpy.context.scene.get("qm_cad"))   # qm.cad()：ブーリアンで作るので、四角形の検査は外す
+    if q["ngons"] and not cad:
         p.append(f"Nゴン（5角形以上）が {q['ngons']} 枚ある{where('ngons')}。四角形に分割する")
-    if q["faces"] and q["tris"] / q["faces"] > TRI_LIMIT:
+    if q["faces"] and q["tris"] / q["faces"] > TRI_LIMIT and not cad:
         p.append(f"三角ポリゴンが {q['tris']} 枚（全体の {q['tris'] * 100 // q['faces']}%）ある{where('tris')}。できるだけ四角形にする")
     if q["bad_edges"]:
         p.append(f"3枚以上の面が共有している辺（非多様体）が {q['bad_edges']} 本ある{where('bad_edges')}")
@@ -325,8 +326,8 @@ def problems_of(q: dict, per: list[dict]) -> list[str]:
     if q["loose_verts"] or q["loose_edges"]:
         p.append(f"面につながっていない頂点 {q['loose_verts']} 個・辺 {q['loose_edges']} 本がある"
                  f"{where('loose_verts') or where('loose_edges')}")
-    if q["faces"] > FACE_LIMIT:
-        p.append(f"面が {q['faces']:,} 枚と多すぎる。{FACE_LIMIT:,} 枚以下にする（サブディビジョンのレベルを下げる）")
+    if q["faces"] > FACE_LIMIT * (4 if cad else 1):
+        p.append(f"面が {q['faces']:,} 枚と多すぎる。{FACE_LIMIT * (4 if cad else 1):,} 枚以下にする（サブディビジョンのレベルを下げる）")
     try:
         p += layout_problems(per)
     except Exception as e:  # 検査の失敗で実行全体を落とさない
