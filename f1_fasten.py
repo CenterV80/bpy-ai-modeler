@@ -112,9 +112,16 @@ def reserve(target: str, p0, p1, r: float):
     _DRILL.setdefault(target, []).append((Vector(p0), Vector(p1), r))
 
 
+ALIAS: dict = {}     # 穴を「Cell」に予約したら、ハニカムや内の皮にも同じ穴をあける、などの対応 {名前: [名前...]}
+
+
 def drill_all(skip=()):
     """予約した穴を、部品ごとに 1 回のブーリアンであける。戻り値 {部品: 穴の数}"""
     done = {}
+    for t0, holes in list(_DRILL.items()):
+        for t in ALIAS.get(t0, []):
+            if t != t0 and t in bpy.data.objects:
+                _DRILL.setdefault(t, []).extend(holes)
     for target, holes in list(_DRILL.items()):
         ob = bpy.data.objects.get(target)
         if ob is None or target in skip:
@@ -306,7 +313,7 @@ def clevis(name: str, center, pin_axis, out_dir, gap: float, length: float, bore
 
 def joint(prefix: str, c, ax, half: float, rr: float, size="M8", host=(), bolted: bool = True, out=None,
           length: float | None = None, base_bolts: int = 2, base_size="M6", mat="ti", insert: bool = True,
-          spacer: bool = True):
+          spacer: bool = True, hardpoint: float = 0.0):
     """軸受（球面軸受・ロッカーのボス）を、二股の金具（クレビス）とボルトで受ける。
     c は軸受の中心、ax はボルトの軸、half は軸受の幅の半分、rr は軸受の外の半径。
     host の部品のいちばん近い面へ金具の台を伸ばす（out で向きを決めることもできる）。
@@ -347,6 +354,10 @@ def joint(prefix: str, c, ax, half: float, rr: float, size="M8", host=(), bolted
     if bolted and hit is not None:
         base_c = c + o * L
         side = ax.cross(o).normalized()
+        if hardpoint:     # 相手の壁に埋めるチタンのインサート（取り付け部の補強。実車ではセルに接着する）
+            hp = qm.box(f"{prefix}_Hardpoint", (3.4 * R + 0.008, gap + 2 * t + 0.008, hardpoint), origin="center", material=_mat("ti"))
+            hp.matrix_world = frame(base_c + o * (hardpoint / 2 + 0.0005), o, side)
+            out_objs.append(hp)
         for k, u in enumerate((-1, 1)[:base_bolts]):     # ボールを避けて、台の両端に
             out_objs += fasten(f"{prefix}_Base{k + 1}", base_c - o * 0.006 + side * R * 1.2 * u, o, 0.006, base_size,
                                nut=False, washer=False, drill=(hit[2],), mat=mat, insert=insert and hit[2].startswith("Cell"))
