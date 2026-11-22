@@ -21,7 +21,8 @@ import f1
 
 __all__ = ["v6_frame", "v6_mains", "v6_block", "v6_heads", "v6_head_gaskets", "v6_cam_covers", "v6_front_cover",
            "v6_sump", "v6_crankshaft", "v6_conrods", "v6_pistons", "v6_valves", "v6_camshafts", "v6_studs",
-           "v6_plugs_injectors", "v6_pumps", "water_pump_point", "v6_oil_jets", "v6_engine_real", "HEAD_TOP"]
+           "v6_plugs_injectors", "v6_pumps", "water_pump_point", "v6_oil_jets", "v6_engine_real", "HEAD_TOP", "GEAR_PLANES",
+           "accessory_layout", "hp_pump_y"]
 
 MM = 0.001
 
@@ -192,6 +193,30 @@ def _lp(bank, t, u, y):
 
 HEAD_TOP = 287.0
 
+# 前のギアの面（エンジンの前の面からの距離 mm。ギアの前の面）：A = MGU-K と補機（ウォーターポンプ・スカベンジ・油圧ポンプ）、
+# B = カムを回すアイドラーと頭の複合ギアの大、C = 頭の複合ギアの小とカムのギア（ヘッドの前の面 = 40 より手前）。推定
+GEAR_PLANES = {"A": 2, "B": 17, "C": 30}
+
+
+def accessory_layout():
+    """前のギアの面 A の補機のギアの中心 (x, z)（mm）と歯数（モジュール 2.5）。クランクのギア 60 歯から、左右のウォーターポンプ（30 歯）、
+    右のウォーターポンプからスカベンジポンプ（18 歯）、スカベンジポンプから油圧ポンプ（18 歯）へ。位置は推定"""
+    cz = _L()["crank_z"]
+    m = 2.5
+    out = {}
+    rw = m * (60 + 30) / 2
+    for bank, tg in ((-1, "L"), (1, "R")):
+        a = math.radians(-10)
+        out[f"WaterPump{tg}"] = (Vector((bank * rw * math.cos(a), cz + rw * math.sin(a))), 30)
+    w = out["WaterPumpR"][0]
+    rs = m * (30 + 18) / 2
+    a = math.radians(-10)
+    out["Scavenge"] = (w + Vector((rs * math.cos(a), rs * math.sin(a))), 18)
+    rh = m * (18 + 18) / 2
+    a = math.radians(70)
+    out["HydPump"] = (out["Scavenge"][0] + Vector((rh * math.cos(a), rh * math.sin(a))), 18)
+    return out
+
 
 def v6_heads(mats=None):
     """左右のシリンダーヘッド（鋳物）。ブーリアンで、燃焼室（ペントルーフ）・吸気と排気のポート・バルブガイドとばねの穴・
@@ -207,7 +232,7 @@ def v6_heads(mats=None):
     for bank, tag in ((-1, "L"), (1, "R")):
         ax = _valve_axes(bank)
         ys = [y for b, i, y in cyl if b == bank]
-        hy0, hy1 = yb0, yr - 10
+        hy0, hy1 = yb0, yr
         head = _box(f"Engine_Head{tag}", -75, 75, hy0, hy1, deck, HEAD_TOP, material=m["alu"])
         # ジャーナルの受け（カムの溝を掘ったあとに残す部分）を先に決める
         journals = [hy0 + 14] + [y + 48 for y in ys[:-1]] + [ys[-1] + 48]
@@ -388,7 +413,7 @@ def v6_sump(mats=None):
 # ================================================================ 回る部品
 
 
-def _web_outline(pin_ang: float, r_main=34.0, r_pin=28.0, r_cw=66.0, stroke=53.0, n=40):
+def _web_outline(pin_ang: float, r_main=34.0, r_pin=28.0, r_cw=58.0, stroke=53.0, n=40):
     """クランクのウェブの輪郭（主軸のまわり・ピンのまわり・反対側のカウンターウェイトを包む形、XZ のミリ）"""
     pts = []
     for k in range(48):
@@ -452,8 +477,8 @@ def v6_crankshaft(crank_deg: float = 30.0, mats=None):
           (yc[1] + pin_l / 2 + 13, yc[2] - pin_l / 2 - 13), (yc[2] + pin_l / 2 + 13, yr - 12)]
     for k, (y0, y1) in enumerate(jr):
         pieces.append(_cyl_y(f"_main{k}", 26, y0 - 1, y1 + 1, z=cz, seg=40))
-    pieces.append(_cyl_y("_nose", 20, yf + 8, mains[0] - 19, z=cz, seg=32))
-    pieces.append(_cyl_y("_flange", 45, yr - 13, yr - 2, z=cz, seg=48))
+    pieces.append(_cyl_y("_nose", 20, yf + 1, mains[0] - 19, z=cz, seg=32))
+    pieces.append(_cyl_y("_flange", 45, yr - 12, yr + 5, z=cz, seg=48))      # 後ろの端のつば（ブロックの後ろの壁の穴を通り、フライホイールを留める）
     crank = pieces[0]
     crank.name = "Crank_Shaft"
     crank.data.materials.append(m["forged"])
@@ -467,8 +492,8 @@ def v6_crankshaft(crank_deg: float = 30.0, mats=None):
         holes.append(_cyl_axis(f"_oil{i}", 3, Vector((0, ym, cz)) - (pin - Vector((0, ym, cz))).normalized() * 30, pin, seg=12))
     qm.cut(crank, holes)
     parts = [crank]
-    g = qm.gear("Crank_Gear", 60, 0.0025, 0.014, bore=0.02, material=m["steel"])     # MGU-K を回すギア（前の軸の先）
-    qm.orient(g, origin=(0, (yf + 12) * MM, cz * MM), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
+    g = qm.gear("Crank_Gear", 60, 0.0025, 0.014, bore=0.02, material=m["steel"])     # MGU-K と補機を回すギア（前の軸の先）
+    qm.orient(g, origin=(0, (yf + GEAR_PLANES["A"]) * MM, cz * MM), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
     parts.append(g)
     for k, ym in enumerate(mains):
         w = 22 if 0 < k < 3 else 26
@@ -597,6 +622,40 @@ def v6_pistons(crank_deg: float = 30.0, mats=None):
     return parts
 
 
+def _lobe_phase(bank, i, kind, j):
+    """カムの山の向き（ラジアン。カムの局所の (x, z) 面で +x から）。点火順に合わせた本当のタイミングではなく推定"""
+    return math.radians(120 * i + (0 if kind == "In" else 100) + 15 * j + (60 if bank > 0 else 0))
+
+
+def _lobe_r(an, ph):
+    """カムの山の半径（mm）。基礎円 16、揚程 9"""
+    return 16 + 9 * max(0.0, math.cos(an - ph)) ** 3
+
+
+def hp_pump_y():
+    """燃料の高圧ポンプを押す 3 つ山のカムの y（右の吸気カムの、前のジャーナルと 1 番シリンダーの山の間。mm）"""
+    yb0 = _L()["engine_front"] + 40
+    ys = [y for b, i, y in f1.v6_cylinders() if b > 0]
+    return (yb0 + 22 + ys[0] - f1.VALVE["dy"] - 6) / 2
+
+
+def _valve_lift(bank, kind, y, j, i, seat, axv):
+    """カムの山がタペットを押し下げる量（mm）。山の形とタペットの上の面から求める（バンクの局所座標、mm）"""
+    a = _valve_axes(bank)[kind]
+    ct, cu = a["cam"]
+    cx = _lx(bank, cu)
+    n = axv.normalized()
+    top = seat + n * 97.0
+    ph = _lobe_phase(bank, i, kind, j)
+    pen = 0.0
+    for k in range(180):
+        an = 2 * math.pi * k / 180
+        rr = _lobe_r(an, ph)
+        q = Vector((cx + rr * math.cos(an), top.y, ct + rr * math.sin(an)))
+        pen = max(pen, (top - q).dot(n))
+    return pen
+
+
 def v6_valves(mats=None):
     """バルブ 24 本（チューリップ形）、弁座、バルブガイド、空気ばねのシリンダーとピストン、コッター、タペット（中空のカップ）"""
     m = _mats(mats)
@@ -627,6 +686,11 @@ def v6_valves(mats=None):
                     tap = qm.lathe(f"{nm}_Tappet", [(11.4 * MM, 86.5 * MM), (11.4 * MM, 97 * MM)], seg=32, material=m["steel"])
                     qm.cut(tap, [qm.cylinder("_tc", 10.2 * MM, 9 * MM, seg=32, location=(0, 0, 86 * MM))])
                     objs.append(tap)
+                    # カムの山がタペットを押している分だけ、バルブ・コッター・ばねのピストン・タペットを下げる（バルブが開く）
+                    lift = _valve_lift(bank, kind, y + dy, j, i, seat, axv)
+                    if lift > 0.05:
+                        for o in (objs[0], objs[4], objs[5], objs[6]):
+                            o.location.z -= lift * MM
                     qm.orient(objs, origin=seat * MM, x_axis=Vector((0, 1, 0)), z_axis=axv)
                     parts += _bank_place(objs, bank)
     return parts
@@ -652,18 +716,23 @@ def v6_camshafts(mats=None):
             pieces.append(_cyl_y("_jf", 12.5, yb0 + 8, yb0 + 22, x=x, z=ct, seg=32))
             for i, y in enumerate(ys):
                 for j, dy in enumerate((-Vv["dy"], Vv["dy"])):
-                    ph = math.radians(120 * i + (0 if kind == "In" else 100) + 15 * j + (60 if bank > 0 else 0))
+                    ph = _lobe_phase(bank, i, kind, j)
                     prof = []
                     for k in range(32):
                         an = 2 * math.pi * k / 32
-                        rr = 16 + 9 * max(0.0, math.cos(an - ph)) ** 3
+                        rr = _lobe_r(an, ph)
                         prof.append((x + rr * math.cos(an), ct + rr * math.sin(an)))
                     secs = [[(px * MM, (y + dy + yy) * MM, pz * MM) for px, pz in prof] for yy in (-6, 6)]
                     pieces.append(qm.loft(f"_lobe{i}{j}", secs))
+            if bank > 0 and kind == "In":          # 燃料の高圧ポンプを押す 3 つ山のカム
+                yp = hp_pump_y()
+                prof = [(x + (17 + 6 * max(0.0, math.cos(3 * (2 * math.pi * k / 48))) ** 2) * math.cos(2 * math.pi * k / 48),
+                         ct + (17 + 6 * max(0.0, math.cos(3 * (2 * math.pi * k / 48))) ** 2) * math.sin(2 * math.pi * k / 48)) for k in range(48)]
+                pieces.append(qm.loft("_trilobe", [[(px * MM, (yp + yy) * MM, pz * MM) for px, pz in prof] for yy in (-5, 5)]))
             qm.union(shaft, pieces)
             qm.cut(shaft, [_cyl_y("_oil", 4, yf + 20, yr, x=x, z=ct, seg=16)])
             g = qm.gear(f"Cam_{tg}{kind}Gear", 36, 0.0015, 0.010, bore=0.008, material=cam_m)    # ギア列（f1.v6_gear_train）から回る
-            qm.orient(g, origin=(x * MM, (yf + 42) * MM, ct * MM), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
+            qm.orient(g, origin=(x * MM, (yf + GEAR_PLANES["C"]) * MM, ct * MM), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
             parts += _bank_place([shaft, g], bank)
     return parts
 
@@ -719,51 +788,77 @@ def v6_plugs_injectors(mats=None):
 
 
 def water_pump_point(bank: int):
-    """ウォーターポンプの中心と、外向き（吸い口の向き）。ブロックの外側の横、2 番と 3 番のシリンダーの間（ミリ）"""
-    ys = [y for b, i, y in f1.v6_cylinders() if b == bank]
-    c = f1.v6_point(bank, 150, -82, (ys[1] + ys[2]) / 2)
-    d, inner = v6_frame(bank)
-    return c, -inner
+    """ウォーターポンプの中心と、外向き（吸い口の向き）（ミリ）。前のカバーの下の左右の角。軸は Y で、ギアの面 A でクランクのギアから回る"""
+    c2 = accessory_layout()[f"WaterPump{'L' if bank < 0 else 'R'}"][0]
+    yf = _L()["engine_front"]
+    return Vector((c2.x, yf + 34, c2.y)), Vector((bank, 0, 0))
+
+
+def _gear_on_shaft(name, teeth, x, z, y0, y1, mats_steel, plane="A"):
+    """ギアの面にギア（モジュール 2.5、幅 14mm）と、そこから y1 までの軸（ミリ）"""
+    yf = _L()["engine_front"]
+    yp = yf + GEAR_PLANES[plane]
+    g = qm.gear(f"{name}_Gear", teeth, 0.0025, 0.014, bore=0.012, material=mats_steel)
+    qm.orient(g, origin=(x * MM, yp * MM, z * MM), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
+    sh = _cyl_y(f"{name}_DriveShaft", 6, yp - 1, y1, x=x, z=z, seg=16, material=mats_steel)
+    return [g, sh]
 
 
 def v6_pumps(mats=None):
-    """ウォーターポンプ 2 個（ブロックの横。渦巻きのハウジングと羽根車）、オイルのスカベンジポンプ（ハウジングと 3 段のロータ）、
-    燃料の高圧ポンプ（V の谷）。オイルフィルターはオイルタンクに付ける（作例）"""
+    """ポンプ：前のカバーの下の左右の角のウォーターポンプ 2 個（渦巻きのハウジング・羽根車。ギアの面 A でクランクのギアから回る）、
+    クランクケースの右の横のオイルポンプ（スカベンジ 3 段と圧送 1 段。右のウォーターポンプのギアから回る）、
+    燃料の高圧ポンプ（右の吸気カムの 3 つ山のカムでプランジャーを押す）。位置と寸法は推定"""
     m = _mats(mats)
     L = _L()
     cz, yf, yr = L["crank_z"], L["engine_front"], L["gearbox_y0"]
     yb0 = yf + 40
+    lay = accessory_layout()
     parts = []
-    # ウォーターポンプ：エンジンの前の面はサバイバルセルの隔壁に直接留めるので、ポンプはブロックの外側の横に付ける
     for bank, tg in ((-1, "L"), (1, "R")):
         c, out = water_pump_point(bank)
-        h = qm.lathe(f"Engine_WaterPump{tg}", [(0.020 * 1, -0.018), (0.042, -0.015), (0.044, 0.0), (0.042, 0.015), (0.030, 0.018)], seg=32,
-                     material=m["alu"])
-        qm.cut(h, [qm.lathe("_wpi", [(0.016, -0.025), (0.038, -0.012), (0.038, 0.012), (0.016, 0.025)], seg=32)])
-        imp = [qm.cylinder(f"Engine_WaterPump{tg}_Impeller", 0.034, 0.003, seg=32, origin="center", material=m["steel"])]
+        h = qm.lathe(f"Engine_WaterPump{tg}", [(0.010, -0.006), (0.034, -0.006), (0.036, 0.0), (0.034, 0.006), (0.010, 0.006)], seg=32,
+                     closed=True, material=m["alu"])
+        qm.cut(h, [qm.lathe("_wpi", [(0.012, -0.0045), (0.032, -0.0045), (0.032, 0.0045), (0.012, 0.0045)], seg=32, closed=True)])
+        imp = [qm.cylinder(f"Engine_WaterPump{tg}_Impeller", 0.028, 0.0015, seg=32, origin="center", location=(0, 0, -0.002), material=m["steel"])]
         for k in range(8):
-            v = qm.box(f"Engine_WaterPump{tg}_Vane{k + 1}", (0.022, 0.0025, 0.014), origin="center", location=(0.022, 0, 0.007), material=m["steel"])
+            v = qm.box(f"Engine_WaterPump{tg}_Vane{k + 1}", (0.016, 0.0015, 0.005), origin="center", location=(0.019, 0, 0.0015), material=m["steel"])
             qm.pivot(v, (0, 0, 0), (0, 0, 45 * k + 20))
             imp.append(v)
-        sh = qm.cylinder(f"Engine_WaterPump{tg}_Shaft", 0.006, 0.05, seg=12, origin="center", material=m["steel"])
-        objs = [h] + imp + [sh]
-        qm.orient(objs, origin=c * MM, x_axis=(0, 1, 0), z_axis=out)
-        parts += objs
-    # スカベンジポンプ：ハウジング（中空）と 3 段のロータ、軸
-    sx, sz = 150, cz - 30          # クランクケースの右の横（クランクが低いので、下ではなく横）
-    hs = _cyl_y("Engine_ScavengePump", 26, yb0 + 20, yr - 30, x=sx, z=sz, seg=32, material=m["alu"])
-    qm.cut(hs, [_cyl_y("_spb", 21, yb0 + 26, yr - 36, x=sx, z=sz, seg=32)])
-    parts.append(hs)
+        objs = [h] + imp
+        qm.orient(objs, origin=c * MM, x_axis=(1, 0, 0), z_axis=(0, 1, 0))
+        inlet = qm.cylinder(f"Engine_WaterPump{tg}_Inlet", 0.013, 0.022, seg=16, axis="X",
+                            location=tuple((c + out * 45) * MM), material=m["alu"])
+        parts += objs + [inlet]
+        parts += _gear_on_shaft(f"Engine_WaterPump{tg}", lay[f"WaterPump{tg}"][1], c.x, c.z, 0, yf + 40, m["steel"])
+    # オイルポンプ：ハウジング（中空）と 3 段のロータ、軸。前の端は、ギアの面 A のギアで右のウォーターポンプのギアから回る
+    sc = lay["Scavenge"][0]
+    sx, sz = sc.x, sc.y
     mains, yc = v6_mains()
+    y_start = min(yf + 95, min(yc) - 8 - 14)
+    hs = _cyl_y("Engine_ScavengePump", 26, y_start, yr - 30, x=sx, z=sz, seg=32, material=m["alu"])
+    qm.cut(hs, [_cyl_y("_spb", 21, y_start + 6, yr - 36, x=sx, z=sz, seg=32)])
+    parts.append(hs)
     for k, y in enumerate(yc):
         g = qm.gear(f"Engine_ScavengeRotor{k + 1}", 6, 0.006, 0.016, bore=0.004, material=m["steel"])
         qm.orient(g, origin=(sx * MM, (y - 8) * MM, sz * MM), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
         ring_ = qm.ring(f"Engine_ScavengeRotor{k + 1}_Outer", 0.0205, 0.0175, 0.016, seg=32, material=m["steel"])
         qm.orient(ring_, origin=(sx * MM, (y - 8) * MM, sz * MM), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
         parts += [g, ring_]
-    parts.append(_cyl_y("Engine_ScavengeShaft", 4, yb0 + 22, yr - 32, x=sx, z=sz, seg=12, material=m["steel"]))
-    # 燃料の高圧ポンプ：V の谷の前寄り（前の面は隔壁に付くので、前には出さない）
-    parts.append(_cyl_y("Engine_FuelPumpHP", 22, yf + 45, yf + 80, x=0, z=cz + 200, seg=24, material=m["steel"]))
+    parts.append(_cyl_y("Engine_ScavengeShaft", 4, y_start + 2, yr - 32, x=sx, z=sz, seg=12, material=m["steel"]))
+    parts += _gear_on_shaft("Engine_ScavengePump", lay["Scavenge"][1], sx, sz, 0, y_start + 1, m["steel"])
+    # 燃料の高圧ポンプ：右の吸気カムの 3 つ山のカムの上（V の側へ 45° 傾けて）。カムカバーを通って V の中へ出る
+    a = _valve_axes(1)["In"]
+    ct, cu = a["cam"]
+    yp = hp_pump_y()
+    cam_c = Vector((_lx(1, cu), yp, ct))
+    n = Vector((_lx(1, 1.0), 0, 1.0)).normalized()                       # 上と V の側の間
+    base = cam_c + n * 23.5
+    body = _cyl_axis("Engine_FuelPumpHP", 15, base + n * 12, base + n * 62, seg=24, material=m["steel"])
+    plunger = _cyl_axis("Engine_FuelPumpHP_Plunger", 5, base - n * 0.5, base + n * 14, seg=16, material=m["steel"])
+    side = Vector((0, 1, 0))
+    inlet = _cyl_axis("Engine_FuelPumpHP_Inlet", 5, base + n * 40 + side * 14, base + n * 40 + side * 26, seg=12, material=m["steel"])
+    outlet = _cyl_axis("Engine_FuelPumpHP_Outlet", 4, base + n * 52 - side * 14, base + n * 52 - side * 24, seg=12, material=m["steel"])
+    parts += _bank_place([body, plunger, inlet, outlet], 1)
     return parts
 
 
@@ -774,8 +869,8 @@ def v6_oil_jets(mats=None):
     for bank, tg in ((-1, "L"), (1, "R")):
         objs = []
         for i, y in enumerate([y for b, k, y in f1.v6_cylinders() if b == bank]):
-            base = Vector((_lx(bank, -46), y + 22, 40))           # ブロックの下、バンクの外寄り
-            tip = Vector((_lx(bank, -30), y + 14, 56))
+            base = Vector((_lx(bank, -50), y + 22, 52))           # シリンダーの下の端の壁（バンクの外寄り）。クランクのおもりが回る範囲の外
+            tip = Vector((_lx(bank, -32), y + 14, 66))
             objs.append(_box(f"Engine_OilJet{tg}{i + 1}_Mount", base.x - 6, base.x + 6, base.y - 6, base.y + 6, base.z - 8, base.z, material=m["steel"]))
             tube = qm.tube(f"Engine_OilJet{tg}{i + 1}", [base * MM, (base + Vector((0, -4, 10))) * MM, tip * MM], radius=0.0025, seg=10,
                            material=m["steel"])
@@ -792,6 +887,12 @@ def v6_engine_real(crank_deg: float = 30.0, mats=None):
     for fn in (v6_block, v6_heads, v6_head_gaskets, v6_cam_covers, v6_front_cover, v6_sump, v6_studs, v6_plugs_injectors, v6_pumps,
                v6_valves, v6_camshafts, v6_oil_jets):
         parts += fn(mats=mats)
+    # ブロックとベッドプレートの後ろの壁に、クランクの後ろのつば（半径 45mm）を通す穴
+    yr = _L()["gearbox_y0"]
+    for nm in ("Engine_Block", "Engine_Bedplate"):
+        ob = [o for o in parts if o.name == nm]
+        if ob:
+            qm.cut(ob[0], [_cyl_y("_rear_seal", 48, yr - 15, yr + 2, z=_L()["crank_z"], seg=48)])
     parts += v6_crankshaft(crank_deg, mats=mats)
     parts += v6_conrods(crank_deg, mats=mats)
     parts += v6_pistons(crank_deg, mats=mats)

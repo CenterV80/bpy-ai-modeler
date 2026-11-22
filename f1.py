@@ -547,12 +547,14 @@ def caliper(name: str, front: bool = True, span_deg: float = 52, mats=None):
     return parts
 
 
-def hub_and_nut(name: str, mats=None):
-    """ハブ（軸受の外輪をつなぐ筒と、ホイールを回す 6 本のドライブピン）とセンターロックナット。
-    軸 Z、ホイールの取り付け面が z=0、外側が +Z。戻り値はリスト"""
+def hub_and_nut(name: str, inner: float = 0.08, mats=None):
+    """ハブ（軸受の内輪に通る軸と、ホイールを回す 6 本のドライブピン）とセンターロックナット。
+    軸 Z、ホイールの取り付け面が z=0、外側が +Z。inner はハブの軸が取り付け面から内側へ伸びる長さ
+    （アップライトの 2 個の軸受を通り抜け、内側の端を軸受のナットで締める）。戻り値はリスト"""
     steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
     ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
-    parts = [qm.ring(f"{name}_Hub", 0.042, 0.022, 0.10, seg=24, location=(0, 0, -0.08), material=ti),
+    parts = [qm.ring(f"{name}_Hub", 0.042, 0.022, inner + 0.02, seg=24, location=(0, 0, -inner), material=ti),
+             qm.ring(f"{name}_BearingNut", 0.054, 0.0405, 0.009, seg=24, location=(0, 0, -inner + 0.004), material=steel),
              qm.ring(f"{name}_Flange", 0.075, 0.042, 0.010, seg=24, location=(0, 0, -0.010), material=ti)]
     for k in range(6):
         a = 2 * math.pi * k / 6
@@ -677,11 +679,9 @@ def tub(name: str = "Tub", mats=None):
 
 
 def gearbox_flange_bolts():
-    """エンジンとギアボックスをつなぐフランジのボルト 12 本の (x, z)（メートル）"""
-    z0 = EST["plank_z"] + 0.03
-    fz = z0 - 0.015 + 0.435 / 2
-    return ([(x, fz + s * 0.195) for x in (-0.18, -0.06, 0.06, 0.18) for s in (-1, 1)] +
-            [(s * 0.18, fz + t * 0.07) for s in (-1, 1) for t in (-1, 1)])
+    """エンジンとギアボックスをつなぐフランジのボルトの (x, z)（メートル）。フランジの輪の幅の中で、エンジンの後ろの面
+    （下はベッドプレート、横はヘッド）に掛かる所。位置は推定"""
+    return [(x, 0.059) for x in (-0.10, -0.04, 0.04, 0.10)] + [(s * 0.177, z) for s in (-1, 1) for z in (0.22, 0.30, 0.38)]
 
 
 def gearbox(name: str = "Gearbox", y0: float = 2.90, length: float = 0.66, mats=None):
@@ -725,7 +725,11 @@ def gearbox(name: str = "Gearbox", y0: float = 2.90, length: float = 0.66, mats=
     for s_ in (-1, 1):                                                   # 左右の横：デフの軸受の受け（別の部品）を差し込む穴
         holes.append(qm.cylinder("_dside", 0.062, 0.08, seg=48, axis="X", location=(s_ * 0.120, 3.400, 0.355)))
     qm.cut(case, holes)
-    qm.cut(flange, [body("_gfo", [shrink(at(st[0][0]), y0 - 0.01), shrink(at(st[0][0]), y0 + 0.03)], None, n=4)])
+    # フランジの開口：下の縁はボルトが通る幅を残す（クラッチの外周のすぐ下まで）
+    c0 = shrink(at(st[0][0]), y0)
+    zl = 0.068
+    opening = (c0[1], zl, c0[3], c0[2] + c0[4] - zl, c0[5])
+    qm.cut(flange, [body("_gfo", [(y0 - 0.01,) + opening, (y0 + 0.03,) + opening], None, n=4)])
     # デフの軸受の受け（左右から差し込んでボルトで留める。中に軸受、外は出力軸の穴）
     extra = []
     ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
@@ -2184,7 +2188,7 @@ def v6_gear_train(name: str = "GearTrain", mats=None):
     MM = 0.001
     steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
     yf, cz = LAYOUT["engine_front"], LAYOUT["crank_z"]
-    y_big, y_cam = yf + 30, yf + 42
+    y_big, y_cam = yf + 17, yf + 30                   # ギアの面 B と C（f1.GEAR_PLANES。C はヘッドの前の面より手前）
     tl = math.radians(VALVE["tilt"])
     cam_t = V6["deck"] + 2 + (VALVE["len"] + 16) * math.cos(tl)
     parts = []
@@ -2218,41 +2222,37 @@ def v6_gear_train(name: str = "GearTrain", mats=None):
     return parts
 
 
-def gear_cover(name: str, circles, y0: float, y1: float, margin: float = 0.008, n: int = 32, mats=None):
-    """ギアを覆うカバー（いくつかの円を包む形を、Y 方向に厚みを付けて作る）。circles = [(x, z, 半径), ...]（メートル）。戻り値 [カバー]"""
+def gear_cover(name: str, circles, y0: float, y1: float, margin: float = 0.008, n: int = 32, hollow: float = 0.0, mats=None):
+    """ギアを覆うカバー（いくつかの円を包む形を、Y 方向に厚みを付けて作る）。circles = [(x, z, 半径), ...]（メートル）。
+    hollow > 0 なら、その肉厚の中空の殻にする。戻り値 [カバー]"""
     mag = _mk(mats, "magnesium", (0.32, 0.32, 0.34), 0.6, 0.5)
-    pts = []
-    for x, z, r in circles:
-        for k in range(64):
-            a = 2 * math.pi * k / 64
-            pts.append((x + (r + margin) * math.cos(a), z + (r + margin) * math.sin(a)))
-    pts = sorted(set(pts))
-    def cross(o, a, b):
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-    lower, upper = [], []
-    for p in pts:
-        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-    for p in reversed(pts):
-        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-    hull = lower[:-1] + upper[:-1]
-    # 周の長さで等間隔に n 点へ置き直す（断面の点数をそろえ、ふたの格子をきれいにする）
-    L = [0.0]
-    for a, b in zip(hull, hull[1:] + hull[:1]):
-        L.append(L[-1] + math.dist(a, b))
-    out, j = [], 0
-    for k in range(n):
-        t = L[-1] * k / n
-        while L[j + 1] < t:
-            j += 1
-        a, b = hull[j], hull[(j + 1) % len(hull)]
-        f = (t - L[j]) / max(L[j + 1] - L[j], 1e-9)
-        out.append((a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
-    secs = [[(x, y, z) for x, z in out] for y in (y0, y1)]
-    return [qm.loft(name, secs, material=mag)]
+
+    def outline(mg):
+        pts = []
+        for x, z, r in circles:
+            for k in range(64):
+                a = 2 * math.pi * k / 64
+                pts.append((x + (r + mg) * math.cos(a), z + (r + mg) * math.sin(a)))
+        hull = fasten.hull2d(pts)
+        # 周の長さで等間隔に n 点へ置き直す（断面の点数をそろえ、ふたの格子をきれいにする）
+        L = [0.0]
+        for a, b in zip(hull, hull[1:] + hull[:1]):
+            L.append(L[-1] + math.dist(a, b))
+        out, j = [], 0
+        for k in range(n):
+            t = L[-1] * k / n
+            while L[j + 1] < t:
+                j += 1
+            a, b = hull[j], hull[(j + 1) % len(hull)]
+            f = (t - L[j]) / max(L[j + 1] - L[j], 1e-9)
+            out.append((a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
+        return out
+
+    cov = qm.loft(name, [[(x, y, z) for x, z in outline(margin)] for y in (y0, y1)], material=mag)
+    if hollow > 0:
+        inner = qm.loft("_gci", [[(x, y, z) for x, z in outline(margin - hollow)] for y in (y0 + hollow, y1 - hollow)])
+        qm.cut(cov, [inner])
+    return [cov]
 
 
 def brake_duct(name: str, disc_center, out, cal_dir, front: bool = True, mats=None):
