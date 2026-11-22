@@ -38,6 +38,9 @@ ap = argparse.ArgumentParser(description="bpy モデラー（AI に操作させ�
 ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
 ap.add_argument("--stdio", action="store_true", help="MCP を標準入出力で受ける（Claude Desktop 向け）")
 ap.add_argument("--run", metavar="FILE", help="スクリプトのファイルを 1 回実行して結果を output に保存し、検査の結果を表示して終わる（AI を通さずに作例を動かすとき）")
+ap.add_argument("--lib", action="append", metavar="DIR",
+                default=[d for d in os.environ.get("BPY_MODELER_LIBS", "").split(os.pathsep) if d],
+                help="部品集のフォルダ。中の .py を読み込み、スクリプトの中でファイル名のまま使える（例：f1.py → f1）。何度でも指定できる")
 ap.add_argument("--out", default=os.environ.get("BPY_MODELER_OUT", str(ROOT / "output")), help="結果を保存するフォルダ")
 ap.add_argument("--timeout", type=float, default=float(os.environ.get("BPY_MODELER_TIMEOUT", "240")),
                 help="スクリプト1回の制限時間（秒、macOS / Linux のみ）")
@@ -55,13 +58,25 @@ import addon_utils  # noqa: E402
 import bmesh  # noqa: E402
 import mathutils  # noqa: E402
 import qm  # noqa: E402  （四角ポリゴン主体のモデリング用の関数。スクリプトの中で qm として使える）
-import f1  # noqa: E402  （F1 マシンの部品。スクリプトの中で f1 として使える）
+import importlib  # noqa: E402
 import uvicorn  # noqa: E402
 from mcp.server.mcpserver import Image, MCPServer  # noqa: E402
 from starlette.applications import Starlette  # noqa: E402
 from starlette.requests import Request  # noqa: E402
 from starlette.responses import FileResponse, JSONResponse, Response  # noqa: E402
 from starlette.routing import Route  # noqa: E402
+
+# 部品集（--lib のフォルダの .py）。フォルダを sys.path に足して読み込み、スクリプトの名前空間に入れる
+LIBS = {}
+for _d in ARGS.lib:
+    _p = Path(_d).expanduser().resolve()
+    if not _p.is_dir():
+        print(f"部品集のフォルダが見つかりません: {_p}", file=sys.stderr)
+        continue
+    sys.path.insert(0, str(_p))
+    for _f in sorted(_p.glob("*.py")):
+        if not _f.stem.startswith("_"):
+            LIBS[_f.stem] = importlib.import_module(_f.stem)
 
 OUT = Path(ARGS.out).resolve()
 RUNS_DIR = OUT / "runs"
@@ -103,7 +118,7 @@ class ScriptTimeout(Exception):
 
 def run_code(code: str) -> tuple[bool, str]:
     """スクリプトを実行し、(成功したか, 出力とエラー) を返す"""
-    ns = {"__name__": "__gen__", "bpy": bpy, "bmesh": bmesh, "mathutils": mathutils, "math": math, "qm": qm, "f1": f1,
+    ns = {"__name__": "__gen__", "bpy": bpy, "bmesh": bmesh, "mathutils": mathutils, "math": math, "qm": qm, **LIBS,
           "Vector": mathutils.Vector, "Matrix": mathutils.Matrix}
     buf = io.StringIO()
     use_alarm = hasattr(signal, "setitimer") and threading.current_thread() is threading.main_thread() and ARGS.timeout > 0
@@ -917,7 +932,7 @@ GUIDE = """Blender（GUI なし）でメッシュを作るツールです。手�
 4. 問題がなくなったら、ユーザーに結果を伝える。保存先を頼まれたら export を使う
 
 実行環境:
-- bpy, bmesh, mathutils, math, qm, f1, Vector, Matrix は import 済み。3D ビューや UI はない（F1 は f1_help を読む）
+- bpy, bmesh, mathutils, math, qm, Vector, Matrix は import 済み。3D ビューや UI はない
 - 単位はメートルで実寸。Z が上。接地するものは原点を底面の中心に置く。
   精密な部品や図面用は qm.units("mm") で報告をミリにし、寸法は「120 * qm.MM」のようにミリで書くとよい
 - メッシュは bmesh か bpy.data で直接組み立てる。bpy.ops は 3D ビューがないと動かないものがあるので、
@@ -944,6 +959,8 @@ GUIDE = """Blender（GUI なし）でメッシュを作るツールです。手�
 - モディファイア（Subdivision Surface, Mirror, Solidify, Bevel など）は使ってよい。
   書き出し時に適用された形が最終結果になるので、面数が膨らみすぎないようにする（目安は合計 5 万面まで）"""
 
+if LIBS:
+    GUIDE += ("\n- 部品集（--lib で読み込んだもの）: " + ", ".join(LIBS) + "。名前のまま使える。使い方は lib_help で読む\n")
 mcp = MCPServer("bpy-modeler", instructions=GUIDE)
 
 
@@ -991,9 +1008,14 @@ async def qm_help() -> str:
 
 
 @mcp.tool(structured_output=False)
-async def f1_help() -> str:
-    """F1 マシン（2026 年規定）の部品を作る f1 の説明。F1・フォーミュラカーを作るときに読む"""
-    return f1.HELP
+async def lib_help(name: str = "") -> str:
+    """--lib で読み込んだ部品集（qm 以外の関数のまとまり）の説明。name を省くと一覧"""
+    if not LIBS:
+        return "部品集は読み込まれていません（サーバーを --lib フォルダ で起動すると使えます）"
+    if name not in LIBS:
+        return "読み込んだ部品集: " + ", ".join(f"{k}（{(getattr(m, '__doc__', '') or '').strip().splitlines()[0] if getattr(m, '__doc__', '') else ''}）" for k, m in LIBS.items())
+    m = LIBS[name]
+    return getattr(m, "HELP", None) or (m.__doc__ or f"{name} には説明がありません")
 
 
 @mcp.tool(structured_output=False)

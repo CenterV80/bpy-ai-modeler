@@ -64,6 +64,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Claude Desktop に bpy-modeler を登録する")
     ap.add_argument("--config", help="claude_desktop_config.json のパス（省略時は自動で探す）")
     ap.add_argument("--remove", action="store_true", help="登録を消す")
+    ap.add_argument("--lib", action="append", default=[], metavar="DIR", help="一緒に読み込む部品集のフォルダ（何度でも指定できる）")
     args = ap.parse_args()
 
     if args.config:
@@ -94,7 +95,12 @@ def main() -> int:
         if not servers:
             cfg.pop("mcpServers")
     else:
-        servers[NAME] = {"command": sys.executable, "args": [str(HERE / "server.py"), "--stdio"]}
+        libs = [str(Path(d).expanduser().resolve()) for d in args.lib]
+        missing = [d for d in libs if not Path(d).is_dir()]
+        if missing:
+            print("部品集のフォルダが見つかりません: " + ", ".join(missing))
+            return 1
+        servers[NAME] = {"command": sys.executable, "args": [str(HERE / "server.py"), "--stdio"] + [a for d in libs for a in ("--lib", d)]}
 
     if path.exists():
         shutil.copyfile(path, path.with_name(path.name + ".bak"))
@@ -107,6 +113,8 @@ def main() -> int:
     if not args.remove:
         print(f"  python : {sys.executable}")
         print(f"  server : {HERE / 'server.py'} --stdio")
+        for d in servers[NAME]["args"][3::2]:
+            print(f"  部品集 : {d}")
     print("Claude Desktop を完全に終了して（タスクトレイのアイコンを右クリック →「終了」）、起動し直してください。")
     return 0
 
