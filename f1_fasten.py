@@ -451,3 +451,130 @@ def vband(name: str, center, axis, r: float, width: float = 0.010, mat="steel"):
 def report():
     """置いた留め具の数（種類ごと）"""
     return dict(sorted(COUNT.items()))
+
+
+# ---------------------------------------------------------------- 管・配線の道すじを、ほかの部品からよける
+class Obstacles:
+    """よける相手の部品（BVH と外接箱の格子）。names に名前を並べる"""
+
+    def __init__(self, names, cell: float = 0.06):
+        self.cell = cell
+        self.box = {}
+        self.grid = {}
+        self.hull = {}
+        for n in names:
+            if n not in bpy.data.objects:
+                continue
+            lo, hi = bbox(n)
+            self.box[n] = (lo, hi)
+            for c in self._cells(lo, hi):
+                self.grid.setdefault(c, []).append(n)
+
+    def tree(self, n):
+        """部品の外形（凸包）の BVH。中が空いた鋳物でも、管を空洞の中へ押し込まないように外形でよける"""
+        if n not in self.hull:
+            ob = bpy.data.objects[n]
+            bm = bmesh.new()
+            mw = qm._mw(ob)
+            for v in ob.data.vertices:
+                bm.verts.new(mw @ v.co)
+            res = bmesh.ops.convex_hull(bm, input=bm.verts)
+            rest = list({g for g in res["geom_interior"] + res["geom_unused"] if isinstance(g, bmesh.types.BMVert)})
+            if rest:
+                bmesh.ops.delete(bm, geom=rest, context="VERTS")
+            bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+            self.hull[n] = BVHTree.FromBMesh(bm)
+            bm.free()
+        return self.hull[n]
+
+    def _cells(self, lo, hi, pad=0.0):
+        a = [int(math.floor((lo[i] - pad) / self.cell)) for i in range(3)]
+        b = [int(math.floor((hi[i] + pad) / self.cell)) for i in range(3)]
+        return [(x, y, z) for x in range(a[0], b[0] + 1) for y in range(a[1], b[1] + 1) for z in range(a[2], b[2] + 1)]
+
+    def near(self, p, pad):
+        c = tuple(int(math.floor(p[i] / self.cell)) for i in range(3))
+        out = set()
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    out.update(self.grid.get((c[0] + dx, c[1] + dy, c[2] + dz), ()))
+        res = []
+        for n in out:
+            lo, hi = self.box[n]
+            if all(lo[i] - pad <= p[i] <= hi[i] + pad for i in range(3)):
+                res.append(n)
+        return res
+
+    def push(self, p, r, ignore=()):
+        """p が部品の中か、半径 r より近ければ、外へ押し出した点を返す（押さなければ None）"""
+        moved = None
+        q = Vector(p)
+        for n in self.near(q, r + 0.01):
+            if n in ignore:
+                continue
+            co, nrm, _, d = self.tree(n).find_nearest(q)
+            if co is None:
+                continue
+            inside = (q - co).dot(nrm) < 0
+            if inside or d < r:
+                q = co + nrm.normalized() * (r * 1.05)
+                moved = q
+        return moved
+
+
+def avoid(points, r: float, obs: Obstacles, ignore_start=(), ignore_end=(), step: float = 0.015, iters: int = 40,
+          clear: float = 0.003, fixed: int = 2):
+    """道すじ points（管の半径 r）を、obs の部品の外へ押し出しながらなめらかにする。両端の fixed 点は動かさない。
+    ignore_start / ignore_end は、端の近く（8cm）でだけ無視する相手（つながる相手）"""
+    pts = [Vector(p) for p in points]
+    total = sum((b - a).length for a, b in zip(pts, pts[1:]))
+    if total > 20.0:
+        raise ValueError(f"道すじの長さが {total:.1f}m あります。点の単位（ミリとメートル）を確かめてください")
+    dense = [pts[0]]
+    for a, b in zip(pts, pts[1:]):
+        n = max(1, int((b - a).length / step))
+        dense += [a + (b - a) * (k / n) for k in range(1, n + 1)]
+    s0, s1 = dense[0], dense[-1]
+    R = r + clear
+    for it in range(iters):
+        moved = 0
+        for i in range(fixed, len(dense) - fixed):
+            ign = set()
+            if (dense[i] - s0).length < 0.08:
+                ign |= set(ignore_start)
+            if (dense[i] - s1).length < 0.08:
+                ign |= set(ignore_end)
+            q = obs.push(dense[i], R, ign)
+            if q is not None:
+                dense[i] = q
+                moved += 1
+        if it < iters - 1:      # なめらかに（押し出した直後に少しだけ戻す）
+            new = dense[:]
+            for i in range(fixed, len(dense) - fixed):
+                new[i] = dense[i] * 0.5 + (dense[i - 1] + dense[i + 1]) * 0.25
+            dense = new
+        if moved == 0 and it > 2:
+            break
+    # 管が自分に重ならないよう、点の間隔を半径の 3 倍以上にとり直し、急な折れをならす
+    gap_ = max(step, r * 3.0, 0.012)
+    out = [dense[0]]
+    for q in dense[1:-1]:
+        if (q - out[-1]).length >= gap_ and (q - dense[-1]).length >= gap_ * 0.6:
+            out.append(q)
+    out.append(dense[-1])
+    for _ in range(6):            # ならしては押し出す（最後は押し出しで終える）
+        sm = out[:]
+        for i in range(1, len(out) - 1):
+            sm[i] = out[i] * 0.5 + (out[i - 1] + out[i + 1]) * 0.25
+        out = sm
+        for i in range(1, len(out) - 1):
+            ign = set()
+            if (out[i] - s0).length < 0.08:
+                ign |= set(ignore_start)
+            if (out[i] - s1).length < 0.08:
+                ign |= set(ignore_end)
+            q = obs.push(out[i], R, ign)
+            if q is not None:
+                out[i] = q
+    return out
