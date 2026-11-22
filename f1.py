@@ -721,7 +721,7 @@ def gearbox(name: str = "Gearbox", y0: float = 2.90, length: float = 0.66, mats=
             holes.append(qm.cylinder("_bb", r, yb - ya, seg=40, axis="Y", location=(0, (ya + yb) / 2, z)))
     # クラッチの軸（クランクの高さ）の軸受の穴（前の壁）。段差のギアで入力軸へ上げる
     holes.append(qm.cylinder("_cb", 0.031, 0.04, seg=40, axis="Y", location=(0, y0 + 0.0755, LAYOUT["crank_z"] * 0.001)))
-    holes.append(qm.cylinder("_drum", 0.031, 0.06, seg=32, axis="Y", location=(0.075, y0 + 0.07, 0.355)))   # シフトドラムのアクチュエーター
+    holes.append(qm.cylinder("_drum", 0.031, 0.06, seg=32, axis="Y", location=(0.095, y0 + 0.07, 0.355)))   # シフトドラムのアクチュエーター
     for s_ in (-1, 1):                                                   # 左右の横：デフの軸受の受け（別の部品）を差し込む穴
         holes.append(qm.cylinder("_dside", 0.062, 0.08, seg=48, axis="X", location=(s_ * 0.120, 3.400, 0.355)))
     qm.cut(case, holes)

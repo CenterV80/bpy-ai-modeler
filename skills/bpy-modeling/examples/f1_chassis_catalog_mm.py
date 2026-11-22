@@ -22,6 +22,7 @@ def P(x, y, z):
 
 mats = f1.materials()
 titan = mats["titanium"]
+FX = f1.fasten                                  # 留め具・クレビス・道すじ（f1_fasten.py）
 
 YR_TUB = f1.LAYOUT["tub"][-1][0] * MM          # サバイバルセルの後ろの隔壁（= エンジンの前の面）
 
@@ -168,7 +169,7 @@ GA = YF + f1.GEAR_PLANES["A"]                           # ギアの面 A（MGU-K
 qm.orient(qm.gear("MGUK_Idler", 38, 2.5 * MM, 14 * MM, bore=10 * MM, material=steel_k), origin=P(I2.x, GA, I2.y), x_axis=(1, 0, 0), z_axis=(0, 1, 0))
 qm.cylinder("MGUK_IdlerShaft", 0.010, 0.0155, seg=12, axis="Y", location=tuple(P(I2.x, GA + 7, I2.y)), material=steel_k)
 for nm in ("MGUK_Gear", "MGUK_Shaft"):                  # MGU-K のギアをアイドラーと同じ面へ（隔壁の後ろ）
-    bpy.data.objects[nm].location.y += (GA - (MG.y / MM + 185))
+    bpy.data.objects[nm].location.y += (GA - (MG.y / MM + 185)) * MM
 
 # =========================================================== 冷却（左右のラジエーター、右のインタークーラー、左のオイルクーラー）
 def cooler(name, s, center, length, height, tilt=15, thick=50):
@@ -336,7 +337,7 @@ place(qm.ring("ClutchSlave_ReleaseBearing", 28 * MM, 18 * MM, 2.5 * MM, seg=32, 
 place(qm.lathe("ClutchShaft", [(16 * MM, 0), (16 * MM, 90 * MM)], seg=16, material=steel), 2900, CLUTCH_Z)
 place(qm.gear("DropGear_Clutch", 58, 2.5 * MM, GW * MM, bore=16 * MM, material=gear_mat), 2948, CLUTCH_Z)
 place(qm.gear("DropGear_Input", 58, 2.5 * MM, GW * MM, bore=16 * MM, material=gear_mat), 2948, IN_Z)
-place(qm.lathe("InputShaft", [(16 * MM, 0), (16 * MM, 354 * MM)], seg=16, material=steel), 2946, IN_Z)
+place(qm.lathe("InputShaft", [(16 * MM, 0), (16 * MM, 588 * MM)], seg=16, material=steel), 2946, IN_Z)     # 後ろの端はギアボックスのオイルポンプを回す
 place(qm.lathe("OutputShaft", [(18 * MM, 0), (18 * MM, 335 * MM)], seg=16, material=steel), 2975, OUT_Z)
 Y0, BLOCK = 2995.0, 56.0
 hub_ys = []
@@ -350,14 +351,20 @@ for b in range(4):
         place(f1.needle_bearing(f"NeedleBrg{k + 1}", 18 * MM, 22 * MM, (GW - 1) * MM, mats=mats), ys + GW / 2, OUT_Z)
     hub_ys.append(yb + 24)
     place(f1.dog_hub(f"DogHub{b + 1}", r_in=18 * MM, r_out=32 * MM, width=16 * MM, mats=mats), yb + 24, OUT_Z)
-BARREL_X, BARREL_Y0 = 75.0, 2990.0
+BARREL_X, BARREL_Y0 = 95.0, 2990.0              # 出力軸のいちばん大きいギア（1 速、半径 62.5mm）の外
 place(f1.shift_barrel("ShiftBarrel", 225 * MM, 24 * MM, tracks=[(y - BARREL_Y0) * MM for y in hub_ys], mats=mats), BARREL_Y0, OUT_Z, BARREL_X)
 for b, y in enumerate(hub_ys):
     place(f1.selector_fork(f"Fork{b + 1}", 32 * MM, (BARREL_X * MM, 0), mats=mats), y, OUT_Z)
 # セレクターレール（フォークが前後に滑る棒。前後の軸受の壁の間に渡す）
-qm.cylinder("SelectorRail", 0.005, (3253 - 2989) * MM, seg=16, axis="Y", location=tuple(P(44, (2989 + 3253) / 2, OUT_Z)), material=steel)
-place(qm.gear("ReverseIdler", 18, Mg * MM, GW * MM, bore=8 * MM, material=gear_mat), 3222, (IN_Z + OUT_Z) / 2, 58)
-place(qm.lathe("ReverseIdlerShaft", [(8 * MM, 0), (8 * MM, 30 * MM)], seg=12, material=steel), 3214, (IN_Z + OUT_Z) / 2, 58)
+qm.cylinder("SelectorRail", 0.005, (3253 - 2989) * MM, seg=16, axis="Y", location=tuple(P(80, (2989 + 3253) / 2, OUT_Z + 45)), material=steel)
+# リバース：入力軸の 14 歯と出力軸の 36 歯の間に 18 歯のアイドラー（軸どうしの距離 85mm から、かみ合う位置を求める）。
+# 歯数と位置は推定。リバースを選ぶドッグは省略
+YR_ = 3214
+place(qm.gear("GearR_In", 14, Mg * MM, GW * MM, bore=16 * MM, material=gear_mat), YR_, IN_Z)
+place(qm.gear("GearR_Out", 36, Mg * MM, GW * MM, bore=18 * MM, material=gear_mat), YR_, OUT_Z)
+RI = f1.mesh_point(Vector((0, IN_Z)), Vector((0, OUT_Z)), Mg * (14 + 18) / 2, Mg * (36 + 18) / 2, side=1)
+place(qm.gear("ReverseIdler", 18, Mg * MM, GW * MM, bore=8 * MM, material=gear_mat), YR_, RI.y, RI.x)
+place(qm.lathe("ReverseIdlerShaft", [(8 * MM, 0), (8 * MM, 46 * MM)], seg=12, material=steel), YR_, RI.y, RI.x)
 for nm, y, z, di, do, w in (("Brg_InFront", 2975, IN_Z, 32, 62, 14), ("Brg_InRear", 3288, IN_Z, 32, 62, 14), ("Brg_ClutchShaft", 2975, CLUTCH_Z, 32, 62, 14),
                             ("Brg_OutFront", 2982, OUT_Z, 36, 72, 14), ("Brg_OutRear", 3260, OUT_Z, 36, 72, 14)):
     place(qm.ball_bearing(nm, di * MM, do * MM, w * MM, balls=10, material=steel), y, z)
@@ -365,7 +372,10 @@ FD_M, ZP, ZC = 5.0, 12, 36
 gp = math.degrees(math.atan(ZP / ZC))
 rp_p, rp_c = FD_M * ZP / 2, FD_M * ZC / 2
 place(qm.bevel_gear("BevelPinion", ZP, FD_M * MM, 25 * MM, gp, material=gear_mat), WB - rp_c, OUT_Z)
-qm.orient(qm.bevel_gear("CrownWheel", ZC, FD_M * MM, 25 * MM, 90 - gp, material=gear_mat), origin=P(-rp_p, WB, AXLE_Z),
+cw = qm.bevel_gear("CrownWheel", ZC, FD_M * MM, 25 * MM, 90 - gp, material=gear_mat)
+qm.cut(cw, [qm.cylinder("_cwb", 0.0625, 0.05, seg=72, origin="center")])           # 内側を抜いた輪のギア（デフのケースのつばに留める）
+qm.orient(cw, origin=P(-rp_p, WB, AXLE_Z), x_axis=(0, 1, 0), z_axis=(1, 0, 0))
+qm.orient(qm.ring("Diff_CrownFlange", 0.078, 0.055, 0.006, seg=48, origin="bottom", material=gear_mat), origin=P(-rp_p - 6, WB, AXLE_Z),
           x_axis=(0, 1, 0), z_axis=(1, 0, 0))
 qm.orient(f1.differential("Diff", 60 * MM, 150 * MM, mats=mats), origin=P(0, WB, AXLE_Z), x_axis=(0, 1, 0), z_axis=(1, 0, 0))
 for side in (-1, 1):
@@ -456,7 +466,11 @@ qm.cylinder("HydPump_DriveShaft", 0.006, 0.040, seg=16, axis="Y", location=tuple
 _hit = f1.fasten.ray(Vector((0.6, 3.04, 0.12)), (-1, 0, 0), ["Gearbox"], far=0.8)
 ACX = (_hit[0].x if _hit else 0.155) + 0.034
 f1.accumulator("Accumulator", Vector((ACX, 2.950, 0.120)), Vector((ACX, 3.130, 0.120)), mats=mats)
-f1.valve_block("ValveBlock", (-0.19, 3.00, 0.34), mats=mats)
+# 油圧の制御弁：ギアボックスの左の横（排気のターボへの管の下、オイルクーラーの上）
+_hit = f1.fasten.ray(Vector((-0.6, 3.15, 0.40)), (1, 0, 0), ["Gearbox"], far=0.8)
+VBX = (_hit[0].x if _hit else -0.15) - 0.040
+f1.valve_block("ValveBlock", (VBX, 3.15, 0.36), mats=mats)
+VB = Vector((VBX, 3.15, 0.36))
 _hp2 = sum(FX.bbox("HydPump_Port2"), Vector()) / 2
 _acp = sum(FX.bbox("Accumulator_Port"), Vector()) / 2
 route("HydLine_Pump", [_hp2, _hp2 + Vector((0.02, 0.01, -0.01)), P(240, 2700, 100), Vector((ACX + 0.03, 2.90, 0.12)), _acp], r=0.005,
@@ -469,12 +483,15 @@ def case_top(x, y):
     hit = f1.fasten.ray(Vector((x, y, 1.0)), (0, 0, -1), ["Gearbox"], far=1.0)
     return hit[0] if hit else Vector((x, y, 0.49))
 # 油圧の管はケースの外を回り、ケースの面の口で終わる（中のシフト・クラッチ・デフのアクチュエーターへはケースの中の通路で）
-route("HydLine_Supply", [Vector((ACX, 3.135, 0.12)), P(240, 3150, 160), P(240, 2930, 300), P(120, 2935, 505), P(-120, 2935, 505), P(-200, 2960, 430),
-                         P(-190, 3000, 345)], r=0.005, kind="hydraulic", mats=mats)
-route("HydLine_Shift", [P(-150, 3010, 420), P(-60, 2990, 500), case_top(0.04, 2.99) + Vector((0, 0, 0.002))], r=0.004, kind="hydraulic", mats=mats)
-route("HydLine_Clutch", [P(-190, 2960, 360), P(-200, 2945, 250), case_port(2.945, (CLUTCH_Z + 40) * MM) + Vector((-0.002, 0, 0))], r=0.004,
+# アキュムレーター（右）から制御弁（左）へは、ギアボックスの上を越える（ターボの下）
+route("HydLine_Supply", [Vector((ACX, 3.135, 0.12)), Vector((ACX + 0.02, 3.15, 0.25)), case_top(0.12, 3.14) + Vector((0, 0, 0.012)),
+                         case_top(-0.12, 3.14) + Vector((0, 0, 0.012)), VB + Vector((-0.02, -0.06, 0.03)), VB + Vector((0, -0.052, 0.02))],
+      r=0.005, kind="hydraulic", mats=mats)
+route("HydLine_Shift", [VB + Vector((0.02, -0.04, 0.085)), VB + Vector((0.03, -0.08, 0.12)), case_top(0.04, 2.99) + Vector((0, 0, 0.002))], r=0.004,
       kind="hydraulic", mats=mats)
-route("PowerSteeringLine", [P(-200, 3000, 345), P(-320, 2950, 110), P(-330, 2440, 100), P(-320, 1600, 130), P(-280, 1000, 130),
+route("HydLine_Clutch", [VB + Vector((0, -0.052, 0.05)), VB + Vector((-0.01, -0.12, 0.0)), case_port(2.945, (CLUTCH_Z + 40) * MM) + Vector((-0.002, 0, 0))],
+      r=0.004, kind="hydraulic", mats=mats)
+route("PowerSteeringLine", [VB + Vector((-0.02, -0.052, 0.06)), VB + Vector((-0.06, -0.12, -0.05)), P(-320, 2950, 110), P(-330, 2440, 100), P(-320, 1600, 130), P(-280, 1000, 130),
                               P(-110, 120, 230), P(-60, -110, 300)], r=0.005, kind="hydraulic", mats=mats)
 f1.small_box("PowerSteering_Valve", (0.04, -0.15, 0.255), (0.05, 0.04, 0.045), color=(0.55, 0.56, 0.58), connectors=1, electronics=False, mats=mats)
 
@@ -524,7 +541,8 @@ route("FuelReturn", [rail_f * MM, P(60, YF + 30, CZ + 300), P(200, 2470, 605), P
 route("OilLineScavenge", [P(150, 2575, CZ - 30), P(150, 2470, CZ - 15), P(100, 2430, 330), P(100, 2400, 335)], r=0.008, kind="oil", mats=mats)
 route("OilLineFilter", [P(140, 2330, 420), P(160, 2350, 430), P(160, 2365, 445)], r=0.008, kind="oil", mats=mats)        # タンク → フィルター
 route("OilLineEngine", [P(180, 2370, 450), P(205, 2480, 300), P(128, YF + 20, CZ + 20)], r=0.008, kind="oil", mats=mats)  # フィルター → エンジン
-route("HydLine_Diff", [P(-190, 3020, 360), P(-200, 3300, 420), case_port(WB * MM - 0.06, 0.42) + Vector((-0.002, 0, 0))], r=0.004, kind="hydraulic", mats=mats)
+route("HydLine_Diff", [VB + Vector((0, 0.052, 0.04)), VB + Vector((-0.01, 0.12, 0.05)), case_port(WB * MM - 0.06, 0.42) + Vector((-0.002, 0, 0))],
+      r=0.004, kind="hydraulic", mats=mats)
 
 # ---- エネルギーストアと制御電子機器の冷却（右の前の小さなクーラー → ES → CE → クーラー）
 es_in, es_out = cooler("ESCooler", 1, (440, 1370, 350), 80, 100)
@@ -753,14 +771,13 @@ for nm, start, d_ in (("Gearbox_DrainPlug", Vector((0, 3.25, 0.05)), Vector((0, 
     hit = FX.ray(start, d_, ["Gearbox"], far=0.5)
     if hit:
         FX.fasten(nm, hit[0], d_, 0.008, "M12", nut=False, washer=True, mat="steel")
-# ギアボックスのオイルポンプ（ケースの左の横、オイルクーラーの戻りの近く。形と位置は推定）
-hit = FX.ray(Vector((-0.40, 3.10, 0.24)), (1, 0, 0), ["Gearbox"], far=0.6)
-if hit:
-    gpc = hit[0] + Vector((-0.024, 0, 0))
-    qm.cylinder("Gearbox_OilPump", 0.024, 0.050, seg=24, axis="Y", location=tuple(gpc), material=mats["titanium"])
-    qm.cylinder("Gearbox_OilPump_Drive", 0.008, 0.020, seg=12, axis="X", location=tuple(gpc + Vector((0.020, 0, 0))), material=steel)
-    for k, dy in enumerate((-0.018, 0.018)):
-        FX.fasten(f"Gearbox_OilPump_Bolt{k + 1}", gpc + Vector((-0.024, dy, 0.016)), (1, 0, 0), 0.010, "M5", nut=False, washer=True, drill=("Gearbox",))
+# ギアボックスのオイルポンプ：入力軸の後ろの端で回る（デフの下を通した軸の先。ケースの後ろの壁に留める）。吸い口は底へ。形と位置は推定
+gpy = 3.538
+qm.cylinder("Gearbox_OilPump", 0.024, 0.030, seg=24, axis="Y", location=(0, gpy, IN_Z * MM), material=mats["titanium"])
+qm.tube("Gearbox_OilPump_Pickup", [Vector((0.0, gpy, IN_Z * MM - 0.022)), Vector((0.0, gpy, IN_Z * MM - 0.06))], radius=0.006, seg=10,
+        material=steel)
+for k, dx in enumerate((-0.016, 0.016)):
+    FX.fasten(f"Gearbox_OilPump_Bolt{k + 1}", Vector((dx, gpy - 0.015, IN_Z * MM + 0.014)), (0, 1, 0), 0.030, "M5", nut=False, washer=True)
 
 # ---- エンジンをサバイバルセルの後ろの隔壁に留めるボルト（6 本）：前のギアのどれにも当たらず、後ろにブロック・ベッドプレート・
 #      ヘッドがある点を探して、なるべく離して選ぶ（エンジンが車体の骨組みを兼ねる）
@@ -826,7 +843,8 @@ for nm in ("Radio", "ADR", "IMU", "BBW", "CE", "PedalBox_Base"):
     bolt_down(nm, 4)
 for nm in ("ECU_Bracket", "Logger_Bracket", "Column_Bracket"):
     bolt_down(nm, 2, size="M6")
-bolt_down("ValveBlock", 4, host=("Gearbox",), size="M6", insert=False)
+for k, (dy, dz) in enumerate(((-0.035, 0.015), (0.035, 0.015), (-0.035, 0.065), (0.035, 0.065))):   # 制御弁を横からギアボックスへ
+    FX.fasten(f"ValveBlock_Bolt{k + 1}", VB + Vector((-0.040, dy, dz)), (1, 0, 0), 0.080, "M6", nut=False, washer=True, drill=("Gearbox",))
 bolt_down("HeaderTank", 2, size="M5")
 # ペダルボックスの前の板（床の板へ下から 3 本）、ステアリングラック（2 本の帯で前の隔壁の上に。帯 1 つにボルト 2 本）
 for k, x in enumerate((-0.08, 0.0, 0.08)):
@@ -1027,7 +1045,7 @@ sens("Sensor_IntakeTemp", P(124, 2650, CZ + 300), (1, 0, 0), "probe")
 sens("Sensor_Throttle", P(50, ty0 - 18, CZ + 330), (1, 0, 0), "block")
 sens("Sensor_TurboSpeed", turbo_w(0, -0.104, -0.068), (0, 0, 1), "block", 0.8)
 # ギアボックス
-sens("Sensor_GearPosition", P(75, 2984, OUT_Z), (0, -1, 0), "block", 0.9)
+sens("Sensor_GearPosition", P(95, 2984, OUT_Z), (0, -1, 0), "block", 0.9)
 hit = FX.ray(Vector((0, 3.25, 0.80)), (0, 0, -1), ["Gearbox"], far=0.6)
 if hit:
     sens("Sensor_OutputSpeed", hit[0], (0, 0, 1), "block")
@@ -1035,7 +1053,7 @@ hit = FX.ray(Vector((-0.40, 3.20, 0.30)), (1, 0, 0), ["Gearbox"], far=0.6)
 if hit:
     sens("Sensor_GearboxOilTemp", hit[0], (-1, 0, 0), "probe")
 sens("Sensor_ClutchPosition", P(-45, 2944, CLUTCH_Z + 30), (0, 0, 1), "block", 0.8)
-sens("Sensor_HydPressure", P(220, 2690, 190), (0, 0, 1), "probe")
+sens("Sensor_HydPressure", Vector((ACX, 3.04, 0.150)), (0, 0, 1), "probe")
 # 足まわり・ブレーキ・ステアリング
 for tg in ("FL", "FR", "RL", "RR"):
     lo_, hi_ = FX.bbox(f"Upright_{tg}_Housing")
