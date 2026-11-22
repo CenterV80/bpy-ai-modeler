@@ -990,31 +990,99 @@ def _u(w, h, z0, n=4, r=0.08):
     return pts
 
 
+CELL = {"skin": 0.0015, "core": 0.012, "zylon": 0.0062}   # セルの皮・ハニカムの厚み（推定）、側面の防護パネル（Zylon 6.2mm 以上：2025 年までの規定の報道）
+
+
+def cell_wall() -> float:
+    """セルの壁の厚み（f1.HOLLOW のときは皮 2 枚とハニカム、そうでなければ 8mm の単板）"""
+    return CELL["skin"] * 2 + CELL["core"] if HOLLOW else 0.008
+
+
+def floor_top() -> float:
+    """セルの床の上面の高さ（m）。床に置く部品はここに載せる"""
+    return _z0() + cell_wall()
+
+
 def survival_cell(name: str = "Cell", mats=None):
-    """サバイバルセル（足もとからエンジンの前までの殻）。LAYOUT["tub"] の断面を U 字でつなぎ、厚み 8mm。
-    コクピットの開口の前後に上ぶた、前後の隔壁、ダッシュボードの梁（脚の上を渡すアーチ）。戻り値はリスト"""
+    """サバイバルセル（足もとからエンジンの前までの殻）。LAYOUT["tub"] の断面を U 字でつなぐ。
+    f1.HOLLOW のときは、カーボンの皮でアルミのハニカムをはさんだ 3 層の壁（name が外の皮、_Core、_InnerSkin）。
+    コクピットの開口の前後に上ぶた、前後の隔壁、前のサスペンションの取り付け位置とダッシュの位置の輪の隔壁、
+    コクピットと燃料タンクの間の隔壁、ダッシュボードの梁、コクピットの縁、側面の防護パネル（Zylon）。
+    壁の厚み・隔壁の位置は推定。戻り値はリスト"""
     MM = 0.001
     z0 = _z0()
     carbon = _m(mats, "carbon")
-    secs = [[(x, y * MM, z) for x, z in _u(w * MM, h * MM, z0)] for y, w, h in LAYOUT["tub"]]
-    shell = qm.loft(name, secs, closed=False, material=carbon)
-    qm.solidify(shell, 0.008)
-    parts = [shell]
+    honey = qm.material("F1_Honeycomb", (0.70, 0.66, 0.50), metal=0.6, rough=0.6)
+    zylon = qm.material("F1_Zylon", (0.80, 0.65, 0.20), metal=0.0, rough=0.7)
+    wall = cell_wall()
+    sk, co = CELL["skin"], CELL["core"]
+
+    def u_secs(inset):
+        return [[(x, y * MM, z) for x, z in _u(w * MM - 2 * inset, h * MM - inset, z0 + inset, r=max(0.02, 0.08 - inset))]
+                for y, w, h in LAYOUT["tub"]]
+
+    parts = []
+    if HOLLOW:
+        for nm, inset, t, mat in ((name, 0.0, sk, carbon), (f"{name}_Core", sk, co, honey), (f"{name}_InnerSkin", sk + co, sk, carbon)):
+            shell = qm.loft(nm, u_secs(inset), closed=False, material=mat)
+            qm.solidify(shell, t)
+            parts.append(shell)
+    else:
+        shell = qm.loft(name, u_secs(0.0), closed=False, material=carbon)
+        qm.solidify(shell, 0.008)
+        parts.append(shell)
     c0, c1 = LAYOUT["cockpit"]
     y_end = LAYOUT["tub"][-1][0]
+    deck_layers = ((sk, carbon, ""), (co, honey, "_Core"), (sk, carbon, "_InnerSkin")) if HOLLOW else ((0.010, carbon, ""),)
     for tag, ys in (("FrontDeck", [y for y in (-350, 0, 500, c0)]), ("RearDeck", [c1, 2150, y_end])):
-        st = []
-        for y in ys:
-            w, top = tub_section(y)
-            st.append((y * MM, 0, (top - 10) * MM, w * MM, 0.010, 0.004))
-        parts.append(body(f"{name}_{tag}", st, carbon, n=2))
+        ztop = 0.0
+        for t, mat, suf in deck_layers:            # 上から外の皮・ハニカム・内の皮
+            st = []
+            for y in ys:
+                w, top = tub_section(y)
+                st.append((y * MM, 0, top * MM - ztop - t, w * MM - 2 * wall, t, min(0.004, t * 0.3)))
+            parts.append(body(f"{name}_{tag}{suf}", st, mat, n=2))
+            ztop += t
     for tag, y in (("FrontBulkhead", -350), ("RearBulkhead", y_end)):
         w, top = tub_section(y)
-        b = qm.box(f"{name}_{tag}", ((w - 16) * MM, 0.010, (top - z0 * 1000 - 18) * MM), origin="bottom",
-                   location=(0, y * MM + (0.005 if y < 0 else -0.005), z0 + 0.008), material=carbon)
+        b = qm.box(f"{name}_{tag}", (w * MM - 2 * wall, 0.010, top * MM - z0 - wall - (wall if HOLLOW else 0.010)), origin="bottom",
+                   location=(0, y * MM + (0.005 if y < 0 else -0.005), z0 + wall), material=carbon)
         parts.append(b)
+    if HOLLOW:
+        def ring(nm, y, rim, t):
+            """輪の隔壁（セルの内側に沿う枠。中は脚や配管が通れるように抜く）"""
+            w, top = tub_section(y)
+            iw, ih = w * MM - 2 * wall, top * MM - z0 - 2 * wall
+            b = qm.box(nm, (iw, t, ih), origin="bottom", location=(0, y * MM, z0 + wall), material=carbon)
+            qm.cut(b, [qm.box("_ring", (iw - 2 * rim, t + 0.01, ih - 2 * rim), origin="bottom", location=(0, y * MM, z0 + wall + rim))])
+            return b
+        parts.append(ring(f"{name}_SuspBulkheadF", -200, 0.040, 0.012))     # 前の A アームの前の脚の位置
+        parts.append(ring(f"{name}_SuspBulkheadR", 210, 0.040, 0.012))      # 後ろの脚の位置
+        parts.append(ring(f"{name}_DashBulkhead", c0 - 20, 0.035, 0.012))   # ダッシュ（コクピットの前の縁）
+        # コクピットと燃料タンクの間の隔壁（全面。シートの背と燃料タンクの前の間）
+        w, top = tub_section(1872)
+        parts.append(qm.box(f"{name}_SeatBulkhead", (w * MM - 2 * wall, 0.012, top * MM - z0 - 2 * wall), origin="bottom",
+                            location=(0, 1.872, z0 + wall), material=carbon))
+        # コクピットの開口の縁（左右の上の縁を厚くする）
+        for s_, tg in ((-1, "L"), (1, "R")):
+            pts = []
+            for y in range(c0, c1 + 1, 100):
+                w, top = tub_section(y)
+                pts.append((s_ * (w / 2 * MM - wall), y * MM, top * MM - 0.012))
+            parts.append(qm.sweep(f"{name}_CockpitRim{tg}", pts, [(-0.012, -0.012), (0.012, -0.012), (0.012, 0.012), (-0.012, 0.012)],
+                                  up=(0, 0, 1), material=carbon))
+        # 側面の防護パネル（Zylon）：コクピットの前から燃料タンクの後ろまでの、セルの横の外側
+        for s_, tg in ((-1, "L"), (1, "R")):
+            secs = []
+            for y in [c0 - 100] + list(range(1100, 2300, 100)) + [2300]:
+                w, top = tub_section(y)
+                xo = w / 2 * MM
+                zl, zh = z0 + 0.09, top * MM - 0.03
+                xs = (xo, xo + CELL["zylon"]) if s_ > 0 else (-xo - CELL["zylon"], -xo)
+                secs.append([(xs[0], y * MM, zl), (xs[1], y * MM, zl), (xs[1], y * MM, zh), (xs[0], y * MM, zh)])
+            parts.append(qm.loft(f"{name}_IntrusionPanel{tg}", secs, material=zylon))
     w, top = tub_section(c0)
-    hw = (w / 2 - 6) * MM
+    hw = (w / 2 - 6) * MM - (wall - 0.008)
     arch = [(-hw, c0 * MM, z0 + 0.32), (-hw * 0.8, c0 * MM, (top - 40) * MM), (0, c0 * MM, (top - 25) * MM),
             (hw * 0.8, c0 * MM, (top - 40) * MM), (hw, c0 * MM, z0 + 0.32)]
     parts.append(qm.sweep(f"{name}_DashBeam", arch, [(-0.015, -0.02), (0.015, -0.02), (0.015, 0.02), (-0.015, 0.02)],
@@ -1212,7 +1280,7 @@ def master_cylinder(name: str, front, back, r: float = 0.011, mats=None):
 
 def fire_extinguisher(name: str = "Extinguisher", y0: float = 1.00, length: float = 0.30, r: float = 0.05, mats=None):
     """消火器（ボトル・弁・2 本の固定バンド）。床の上、Y 方向に寝かせる。戻り値はリスト"""
-    z = _z0() + 0.008 + r
+    z = floor_top() + r
     bottle_mat = qm.material("F1_Bottle", (0.75, 0.08, 0.06), metal=0.4, rough=0.3)
     alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
     prof = [(r * 0.5, 0), (r * 0.9, 0.004), (r, 0.02), (r, length - 0.03), (r * 0.8, length - 0.008), (r * 0.35, length)]

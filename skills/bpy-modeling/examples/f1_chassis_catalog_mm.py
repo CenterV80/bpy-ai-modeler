@@ -9,11 +9,12 @@
 #           管・排気管・プレナム・ターボ・MGU-K も中空（f1.HOLLOW）。そのため qm.cad() で四角形の検査を外す
 #           継ぎ目はすべてボルト・ナット・座金で留める（f1.fasten。同じ寸法の留め具はメッシュを共有）。
 #           箱の中身（燃料セル・電池・インバーター・基板・ラジエーターのコア）とセンサー・配線の枝も作る（中の作りと位置は推定）
-# 図鑑    : ビューアーの「図鑑を開く」で、qm.catalog で登録した項目ごとに等角図・三面図・部品表を描く（48 項目）
+# 図鑑    : ビューアーの「図鑑を開く」で、qm.catalog で登録した項目ごとに等角図・三面図・部品表を描く（50 項目）
 qm.units("mm")
 qm.cad()
 f1.HOLLOW = True
 MM = qm.MM
+FT = f1.floor_top()          # セルの床の上面（壁はカーボンの皮でハニカムをはさんだ 3 層。厚みは推定）
 L = f1.LAYOUT
 
 def P(x, y, z):
@@ -63,7 +64,7 @@ f1.roll_hoop("RollHoop", y=1870 * MM, top_z=960 * MM, half_w=200 * MM, mats=mats
 hw1800 = f1.tub_section(1800)[0] / 2
 f1.halo_frame("Halo", rear_y=1800 * MM, front_y=1100 * MM, half_w=(hw1800 - 22) * MM, top_z=840 * MM, mats=mats)
 f1.headrest("Headrest", 1600 * MM, 1840 * MM, mats=mats)
-f1.seat("Seat", [(1.30, 0.080), (1.45, 0.073), (1.58, 0.082), (1.70, 0.20), (1.77, 0.40), (1.81, 0.60)], mats=mats)
+f1.seat("Seat", [(1.30, FT + 0.007), (1.45, FT), (1.58, FT + 0.009), (1.70, 0.20), (1.77, 0.40), (1.81, 0.60)], mats=mats)
 f1.harness("Harness", buckle=(0, 1.45, 0.26), mats=mats)
 
 # ステアリングホイールとコラム（ラックのピニオンから、ユニバーサルジョイント 2 つで折れてホイールへ）
@@ -82,8 +83,8 @@ qm.box("Column_Bracket", (0.040, 0.026, f1.tub_section(1050)[1] * MM - 0.045 - c
 qm.orient(qm.ring("Column_Bearing", 0.022, 0.012, 0.024, seg=16, origin="center", material=titan), origin=(0, 1.05, cb_z), x_axis=(1, 0, 0), z_axis=c_dir)
 
 # ペダル（床に軸。左がブレーキ、右がアクセル。クラッチはホイールの裏のパドル）
-qm.box("PedalBox_Base", (0.30, 0.30, 0.010), origin="bottom", location=(0, 0.56, 0.071), material=titan)
-qm.box("PedalBox_Front", (0.24, 0.010, 0.26), origin="bottom", location=(0, 0.425, 0.081), material=titan)
+qm.box("PedalBox_Base", (0.30, 0.30, 0.010), origin="bottom", location=(0, 0.56, FT - 0.002), material=titan)
+qm.box("PedalBox_Front", (0.24, 0.010, 0.26), origin="bottom", location=(0, 0.425, FT + 0.008), material=titan)
 for x, nm in ((-80, "PedalBrake"), (80, "PedalThrottle")):
     f1.pedal(nm, P(x, 640, 95), P(x, 520, 300), mats=mats)
 t = (220 - 95) / (300 - 95)
@@ -112,9 +113,9 @@ for s, tg in ((-1, "L"), (1, "R")):
 
 # =========================================================== 燃料・エネルギーストア
 FC0, FC1 = L["fuel_cell"]
-f1.energy_store("ES", y0=FC0 * MM, y1=FC1 * MM, width=0.56, z0=0.073, h=0.10, mats=mats)
-f1.fuel_cell("FuelCell", y0=FC0 * MM, y1=FC1 * MM, half_w=0.32, z0=0.179, z1=0.64, mats=mats)
-f1.control_electronics("CE", center=(0.16, 2.33, 0.073), size=(0.18, 0.14, 0.16), mats=mats)
+f1.energy_store("ES", y0=FC0 * MM, y1=FC1 * MM, width=0.56, z0=FT, h=0.10, mats=mats)
+f1.fuel_cell("FuelCell", y0=FC0 * MM, y1=FC1 * MM, half_w=0.32, z0=FT + 0.106, z1=0.632, mats=mats)
+f1.control_electronics("CE", center=(0.16, 2.33, FT), size=(0.18, 0.14, 0.16), mats=mats)
 f1.oil_tank("OilTank", 2.25, 2.49, 0.14, 0.30, 0.60, mats=mats)          # 燃料タンクとエンジンの間（隔壁の手前まで）
 # オイルフィルター（オイルタンクの左の横に。缶と中のエレメント）
 ofc = qm.cylinder("Engine_OilFilter", 0.030, 0.040, seg=32, axis="X", location=(0.160, 2.37, 0.45), material=titan)
@@ -353,7 +354,7 @@ for s, tg in ((-1, "FL"), (1, "FR")):
     lo = CORNER[tg]["lower"]
     route(f"BrakeLine_{tg}", [P(-115, 440, 220), P(-115, 380, 150), P(s * 60, 100, 110), P(s * 160, -150, 170),
                                 lo + Vector((-s * 0.06, -0.02, 0.04)), CORNER[tg]["cal"]], r=0.004, kind="brake", mats=mats)
-f1.small_box("BBW", (-0.25, 2.37, 0.073), (0.08, 0.06, 0.05), color=(0.20, 0.22, 0.26), connectors=1, electronics=False, mats=mats)
+f1.small_box("BBW", (-0.25, 2.37, FT), (0.08, 0.06, 0.05), color=(0.20, 0.22, 0.26), connectors=1, electronics=False, mats=mats)
 route("BrakeLine_Rear", [P(-45, 440, 220), P(-45, 380, 150), P(-200, 800, 90), P(-250, 2300, 90), P(-250, 2380, 100)], r=0.004, kind="brake", mats=mats)
 for s, tg in ((-1, "RL"), (1, "RR")):
     lo = CORNER[tg]["lower"]
@@ -366,7 +367,7 @@ f1.coupling("FuelCoupling", P(-(hw2100 + 2), 2100, 480), axis=(-1, 0, 0), mats=m
 route("FuelFillLine", [P(-(hw2100 - 4), 2100, 480), P(-(hw2100 - 20), 2100, 480), P(-300, 2100, 470)], r=0.012, kind="fuel", mats=mats)
 
 # ---- 消火器の配管とノズル（コクピットの足もとと、エンジンの前へ）
-EZ = 0.065 + 0.008 + 0.05
+EZ = FT + 0.05
 route("ExtLine_Cockpit", [P(0, 1320, EZ / MM), P(40, 1345, 100), P(150, 1200, 90), P(150, 700, 100), P(150, 660, 108)], r=0.004, kind="extinguisher", mats=mats)
 f1.nozzle("ExtNozzle_Cockpit", P(150, 660, 108), (0, -1, 0.3), mats=mats)
 route("ExtLine_Engine", [P(0, 1320, EZ / MM), P(-40, 1345, 100), P(-230, 1400, 90), P(-300, 1900, 90), P(-300, 2300, 90),
@@ -374,9 +375,9 @@ route("ExtLine_Engine", [P(0, 1320, EZ / MM), P(-40, 1345, 100), P(-230, 1400, 9
 f1.nozzle("ExtNozzle_Engine", P(-215, YF + 25, 160), (0.3, 1, 0.3), mats=mats)
 
 # ---- ドリンクの装置、無線、事故データ記録装置
-f1.drink_system("Drink", bag=(0.27, 1.50, 0.073), mats=mats)
-f1.small_box("Radio", (0.25, 1.15, 0.073), (0.08, 0.10, 0.05), color=(0.18, 0.18, 0.20), connectors=2, mats=mats)
-f1.small_box("ADR", (-0.25, 1.15, 0.073), (0.06, 0.08, 0.04), color=(0.75, 0.55, 0.05), connectors=1, mats=mats)
+f1.drink_system("Drink", bag=(0.27, 1.50, FT), mats=mats)
+f1.small_box("Radio", (0.25, 1.15, FT), (0.08, 0.10, 0.05), color=(0.18, 0.18, 0.20), connectors=2, mats=mats)
+f1.small_box("ADR", (-0.25, 1.15, FT), (0.06, 0.08, 0.04), color=(0.75, 0.55, 0.05), connectors=1, mats=mats)
 
 # ---- 前のアンチロールバーとヒーブダンパー（ロッカーの間。配置は推定）
 deck90 = f1.tub_section(90)[1] * MM
@@ -441,7 +442,7 @@ tpms_m = qm.material("F1_TPMS", (0.85, 0.80, 0.15), metal=0.3, rough=0.4)
 for tg in ("FL", "FR", "RL", "RR"):
     c = CORNER[tg]["mid"]
     qm.box(f"TPMS_{tg}", (0.030, 0.020, 0.012), origin="bottom", location=(c.x, c.y, c.z + 0.2236), material=tpms_m)
-f1.small_box("IMU", (0, 1.845, 0.073), (0.05, 0.04, 0.03), color=(0.20, 0.35, 0.65), connectors=1, mats=mats)
+f1.small_box("IMU", (0, 1.840, FT), (0.05, 0.04, 0.03), color=(0.20, 0.35, 0.65), connectors=1, mats=mats)
 
 # =========================================================== 残りの部品
 # ---- 前のカバーの中のギア列（クランク → アイドラー 2 枚 → 頭の複合ギア → カム）と、MGU-K のギアのカバー
@@ -495,6 +496,7 @@ for k, (x, z) in enumerate([(s * 0.143, nz + t * 0.10) for s in (-1, 1) for t in
 
 # =========================================================== 留め具（ボルト・ナット・座金・スペーサー・クレビス）
 FX = f1.fasten
+FX.ALIAS["Cell"] = ["Cell_Core", "Cell_InnerSkin", "Cell_IntrusionPanelL", "Cell_IntrusionPanelR"]   # セルの穴は 3 層の壁と防護パネルに通す
 # ---- サスペンション：ロッドエンドはすべて二股の金具（クレビス）にボルト 1 本で留め、ボールの両側にスペーサー。
 #      胴体側の金具はサバイバルセル・ギアボックスへボルト 2 本で留める（カーボンには金属のねじを埋める）
 for tg in ("FL", "FR", "RL", "RR"):
@@ -502,7 +504,7 @@ for tg in ("FL", "FR", "RL", "RR"):
     body = ["Cell"] if front else ["Gearbox"]
     for arm in ("LowerArm", "UpperArm"):
         for e in ("F", "R"):
-            FX.rod_end_joint(f"{arm}_{tg}_RodEnd{e}", host=body)
+            FX.rod_end_joint(f"{arm}_{tg}_RodEnd{e}", host=body, hardpoint=f1.cell_wall() if front else 0.0)
         FX.rod_end_joint(f"{arm}_{tg}_Outer", host=[f"Upright_{tg}_{'Upper' if arm == 'UpperArm' else 'Lower'}Arm"],
                          bolted=False, outward=True, length=0.022)
     FX.rod_end_joint(f"Pushrod_{tg}_RodEndA", host=[f"LowerArm_{tg}_Front", f"LowerArm_{tg}_Rear"], bolted=False)
@@ -515,7 +517,8 @@ for tg in ("FL", "FR", "RL", "RR"):
     # ロッカーの軸：ハブの針状ころ軸受を、二股の金具と軸のボルトで受ける（金具は胴体へボルト留め）
     rk = bpy.data.objects[f"Rocker_{tg}_Hub"]
     rc_ = sum((qm._mw(rk) @ v.co for v in rk.data.vertices), Vector()) / len(rk.data.vertices)
-    FX.joint(f"Rocker_{tg}_Pivot", rc_, (0, 1, 0), 0.012 * 1.6 / 2, 0.020, "M10", host=body, out=(0, 0, -1), spacer=False)
+    FX.joint(f"Rocker_{tg}_Pivot", rc_, (0, 1, 0), 0.012 * 1.6 / 2, 0.020, "M10", host=body, out=(0, 0, -1), spacer=False,
+             hardpoint=f1.cell_wall() if front else 0.0)
 for nm, hosts in (("FrontHeave", ["HeaveLink_FL", "HeaveLink_FR"]), ("RearHeave", ["HeaveLink_RL", "HeaveLink_RR"])):
     for e in ("A", "B"):
         FX.rod_end_joint(f"{nm}_RodEnd{e}", host=hosts, bolted=False)
@@ -712,7 +715,7 @@ bolt_down("ValveBlock", 4, host=("Gearbox",), size="M6", insert=False)
 bolt_down("HeaderTank", 2, size="M5")
 # ペダルボックスの前の板（床の板へ下から 3 本）、ステアリングラック（2 本の帯で前の隔壁の上に。帯 1 つにボルト 2 本）
 for k, x in enumerate((-0.08, 0.0, 0.08)):
-    FX.fasten(f"PedalBox_Front_Bolt{k + 1}", Vector((x, 0.425, 0.071)), (0, 0, 1), 0.020, "M5", nut=False, washer=False)
+    FX.fasten(f"PedalBox_Front_Bolt{k + 1}", Vector((x, 0.425, FT - 0.002)), (0, 0, 1), 0.020, "M5", nut=False, washer=False)
 for j, x in enumerate((-0.07, 0.07)):
     band = qm.ring(f"Rack_Clamp{j + 1}", 0.026, 0.022, 0.016, seg=24, origin="center", material=titan)
     band.matrix_world = FX.frame(RACK + Vector((x, 0, 0)), (1, 0, 0), (0, 1, 0))
@@ -751,6 +754,9 @@ for tg in ("L", "R"):
     for k, (u, v) in enumerate(((0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75))):
         FX.fasten(f"Halo_Mount{tg}_Bolt{k + 1}", Vector((lo_.x + (hi_.x - lo_.x) * u, lo_.y + (hi_.y - lo_.y) * v, hi_.z)), (0, 0, -1),
                   hi_.z - lo_.z + 0.010, "M10", nut=False, washer=True, drill=("Cell",), insert=True)
+    for k, (u, v) in enumerate(((0.5, 0.12), (0.5, 0.88))):        # 位置決めのダウエルピン（ボルトと一緒に）
+        FX.place(f"Halo_Mount{tg}_Dowel{k + 1}", FX.proto("pin", 0.008, 0.024, "steel"),
+                 FX.frame(Vector((lo_.x + (hi_.x - lo_.x) * u, lo_.y + (hi_.y - lo_.y) * v, lo_.z)), (0, 0, 1)), "pin")
 lo_, hi_ = FX.bbox("Halo_Pillar")
 for k, dy in enumerate((-0.030, 0.0, 0.030)):
     FX.fasten(f"Halo_Pillar_Bolt{k + 1}", Vector((0.0, (lo_.y + hi_.y) / 2 + dy, lo_.z + 0.010)), (0, 0, -1), 0.020, "M8", nut=False, washer=True,
@@ -936,7 +942,10 @@ qm.catalog("all", "シャシー全体（車体を除く）", "カウル・ウイ
            "そのほかの部品の位置は推定（ペダルの前後位置・燃料タンクの大きさ・車高を含む）。", parts=[""],
            labels={"Cell": "サバイバルセル", "Engine_": "V6 エンジン", "Gearbox": "ギアボックス", "RadiatorL": "ラジエーター",
                    "Turbo": "ターボ", "Halo": "ヘイロー", "Tyre_FL": "前輪", "Tyre_RL": "後輪"}, group="全体")
-qm.catalog("cell", "サバイバルセル", "ドライバーと燃料タンクを囲むカーボンの殻。コクピットの前後に上ぶた、脚の上にダッシュボードの梁。"
+qm.catalog("cell", "サバイバルセル", "ドライバーと燃料タンクを囲む殻。壁はカーボンの皮でアルミのハニカムをはさんだ 3 層（厚みは推定）。"
+           "コクピットの前後に上ぶた、前のサスペンションの取り付け位置とダッシュの位置に輪の隔壁、コクピットと燃料タンクの間に隔壁。"
+           "コクピットと燃料タンクの横の外側に Zylon の防護パネル（6.2mm。2025 年までの規定の値の報道による）。"
+           "サスペンションの取り付け部にはチタンのインサートを埋める。ヘイローは 3 点でボルトとダウエルピンで留める。"
            "後ろの隔壁にエンジンを直接ボルトで留める。", parts=["Cell", "RollHoop", "Halo"],
            labels={"Cell_DashBeam": "ダッシュボードの梁", "Cell_FrontDeck": "前の上ぶた", "Cell_RearDeck": "後ろの上ぶた",
                    "RollHoop": "ロールフープ", "Halo": "ヘイロー", "Cell_RearBulkhead": "後ろの隔壁"}, group=G1)
@@ -1142,6 +1151,18 @@ qm.catalog("sec_radiator", "ラジエーターのコアの断面", "左のラジ
            "その間を波形のフィンが埋める（ここでは波形のフィンの切り口が見える）。チューブとフィンの間隔は推定。", parts=["RadiatorL"],
            labels={"RadiatorL": "側板", "RadiatorL_TankFront": "前のタンク", "RadiatorL_TankRear": "後ろのタンク", "RadiatorL_Fin21": "フィン",
                    "RadiatorL_Tube21": "チューブ"}, group=G9, section=("Z", 0.352))
+qm.catalog("sec_cockpit", "コクピットの断面", "Y = 1,300mm（コクピットの中ほど）で切り、前から見た断面。セルの壁の 3 層（皮・ハニカム・皮）と外の防護パネル、"
+           "床の上のシートと消火器、横の膝のパッド、上の開口の縁、外へ伸びる側面衝撃吸収構造。",
+           parts=["Cell", "Seat", "Extinguisher", "CockpitPad", "SideImpact", "Halo", "Drink", "Radio", "ADR", "ExtLine", "Loom", "Column"],
+           labels={"Cell": "外の皮", "Cell_Core": "ハニカム", "Cell_InnerSkin": "内の皮", "Cell_IntrusionPanelL": "防護パネル（Zylon）",
+                   "Seat": "シート", "Extinguisher": "消火器", "CockpitPadR": "膝のパッド", "SideImpactUpperL": "側面衝撃吸収構造"},
+           group=G9, section=("Y", 1.30))
+qm.catalog("sec_frontsusp", "前のサスペンションの取り付け部の断面", "Y = -200mm（前の A アームの前の脚の位置）で切った断面。セルの中の輪の隔壁、"
+           "壁に埋めたチタンのインサートと、そこへボルトで留めた二股の金具、A アームのロッドエンド。",
+           parts=["Cell", "LowerArm_FL", "LowerArm_FR", "UpperArm_FL", "UpperArm_FR", "Rack", "NoseCrash"],
+           labels={"Cell_SuspBulkheadF": "輪の隔壁", "Cell_Core": "ハニカム", "LowerArm_FL_RodEndF_Hardpoint": "チタンのインサート",
+                   "LowerArm_FL_RodEndF_Clevis_Lug1": "二股の金具", "UpperArm_FR_RodEndF_Housing": "ロッドエンド"},
+           group=G9, section=("Y", -0.200))
 qm.catalog("sec_chassis", "シャシーの断面（燃料タンクの位置）", "Y = 2,000mm で切り、前から見た断面。サバイバルセルの殻の中に燃料セルと、その下のエネルギーストア。"
            "左右のサイドポッドにインタークーラーとオイルクーラー。",
            parts=["Cell", "FuelCell", "ES", "Intercooler", "OilCooler", "RollHoop", "Halo", "Plank", "Headrest"],
