@@ -25,9 +25,17 @@ titan = mats["titanium"]
 
 YR_TUB = f1.LAYOUT["tub"][-1][0] * MM          # サバイバルセルの後ろの隔壁（= エンジンの前の面）
 
+def pickup(s, y, z, host, stand=0.032):
+    """サスペンションの胴体側の取り付け点：host（セル・ギアボックス）の外の面から stand だけ外（外から光線を当てて面を測る）"""
+    hit = f1.fasten.ray(Vector((s * 0.6, y, z)), (-s, 0, 0), [host], far=0.6)
+    x = hit[0].x if hit else s * 0.15
+    return Vector((x + s * stand, y, z))
+
 # 配管・配線は route で引く。サバイバルセルの隔壁や横の壁を通る所に、貫通の継ぎ手（グロメット）を自動で付ける
+ROUTES = {}                                              # 管・配線の名前 → (点, 半径)。最後に途中を留めるクリップを付ける
 def route(name, points, r=0.019, kind="hose", mats=None):
     parts = f1.pipe(name, points, r=r, kind=kind, mats=mats)
+    ROUTES[name] = ([Vector(q) for q in points], r, kind)
     pts = [Vector(q) for q in points]
     z0 = f1.EST["plank_z"] + 0.03
     def wall(q):                                         # 壁の外なら正、中なら負
@@ -53,7 +61,9 @@ def route(name, points, r=0.019, kind="hose", mats=None):
         g = qm.ring(f"{name}_Fitting{k + 1}", r + 0.007, r, 0.014, seg=12, origin="center", material=titan)
         qm.orient(g, origin=q, x_axis=d.orthogonal(), z_axis=d)
         parts.append(g)
+    ROUTE_PARTS[name] = [o.name for o in parts]
     return parts
+ROUTE_PARTS = {}
 
 CZ = L["crank_z"]
 YF, YGB = L["engine_front"], L["gearbox_y0"]
@@ -93,13 +103,14 @@ qm.tube("BalanceBar", [bb + Vector((-0.045, 0, 0)), bb + Vector((0.045, 0, 0))],
 for k, dx in enumerate((-35, 35)):
     f1.master_cylinder(f"Master{k + 1}", P(-80 + dx, 432, 220), bb + Vector((dx * MM, 0, 0)), mats=mats)
 # ブレーキフルードのリザーバー（前後の系統に 1 つずつ。ペダルボックスの前の板の上に。形と位置は推定）
+PT = (FT + 0.008 + 0.26) / MM                       # ペダルボックスの前の板の上端（ミリ）
 for k, dx in enumerate((-35, 35)):
     rx = -80 + dx
     qm.lathe(f"BrakeReservoir{k + 1}", [(0.012, 0.0), (0.016, 0.004), (0.016, 0.046), (0.012, 0.050)], seg=16,
-             material=qm.material("F1_Reservoir", (0.85, 0.85, 0.80), metal=0.0, rough=0.4), location=tuple(P(rx, 405, 342)))
-    qm.cylinder(f"BrakeReservoir{k + 1}_Cap", 0.010, 0.008, seg=16, location=tuple(P(rx, 405, 392)), material=titan)
-    qm.box(f"BrakeReservoir{k + 1}_Bracket", (0.036, 0.016, 0.004), origin="bottom", location=tuple(P(rx, 412, 338)), material=titan)
-    qm.tube(f"BrakeReservoir{k + 1}_Hose", [P(rx, 405, 343), P(rx, 405, 300), P(rx, 437, 260), P(rx, 437, 237)], radius=0.003, seg=8,
+             material=qm.material("F1_Reservoir", (0.85, 0.85, 0.80), metal=0.0, rough=0.4), location=tuple(P(rx, 405, PT + 4)))
+    qm.cylinder(f"BrakeReservoir{k + 1}_Cap", 0.010, 0.008, seg=16, location=tuple(P(rx, 405, PT + 54)), material=titan)
+    qm.box(f"BrakeReservoir{k + 1}_Bracket", (0.036, 0.024, 0.004), origin="bottom", location=tuple(P(rx, 416, PT)), material=titan)
+    qm.tube(f"BrakeReservoir{k + 1}_Hose", [P(rx, 405, PT + 5), P(rx, 405, PT - 40), P(rx, 437, 260), P(rx, 437, 237)], radius=0.003, seg=8,
             material=qm.material("F1_Hose", (0.10, 0.10, 0.12), metal=0.0, rough=0.7))
 qm.cylinder("PedalThrottle_Sensor", 0.016, 0.03, seg=12, axis="X", location=tuple(P(80 + 40, 640, 95)), material=mats["titanium"])
 
@@ -227,8 +238,11 @@ for s, tg in ((-1, "FL"), (1, "FR")):
     CORNER[tg] = {"cal": cal_in, "lower": lower, "upper": upper, "mid": Mf - OUT * (TWF * 0.95 * 0.05)}
     qm.sweep(f"CaliperBracket_{tg}", [U + cal_dir * 0.06, cal_in], [(-0.010, -0.014), (0.010, -0.014), (0.010, 0.014), (-0.010, 0.014)],
              up=OUT, material=titan)
-    f1.wishbone(f"LowerArm_{tg}", (s * 0.17, -0.20, 0.17), (s * 0.17, 0.22, 0.17), lower, mats=mats)
-    f1.wishbone(f"UpperArm_{tg}", (s * 0.20, -0.18, 0.43), (s * 0.21, 0.20, 0.44), upper, mats=mats)
+    # 胴体側の取り付け点は、セルの外の面から 32mm 外（二股の金具で受ける）。前の脚と後ろの脚でセルの幅が違う
+    PK = {"LF": pickup(s, -0.20, 0.17, "Cell"), "LR": pickup(s, 0.22, 0.17, "Cell"), "UF": pickup(s, -0.18, 0.43, "Cell"), "UR": pickup(s, 0.20, 0.44, "Cell")}
+    CORNER[tg + "_pk"] = PK
+    f1.wishbone(f"LowerArm_{tg}", PK["LF"], PK["LR"], lower, mats=mats)
+    f1.wishbone(f"UpperArm_{tg}", PK["UF"], PK["UR"], upper, mats=mats)
     f1.pushrod(f"Pushrod_{tg}", lower + Vector((-s * 0.07, 0.02, 0.03)), (s * 0.17, 0.05, 0.58), mats=mats)
     TOP = 0.505
     f1.rocker(f"Rocker_{tg}", (s * 0.12, 0.05, 0.56), [(s * 0.17, 0.05, 0.58), (s * 0.08, 0.05, 0.62)], normal=(0, 1, 0), clevis=True, mats=mats)
@@ -269,9 +283,13 @@ for side, tag in ((-1, "L"), (1, "R")):
     qm.sweep(f"CaliperBracket_R{tag}", [U + cal_dir * (60 * MM), cal_in],
              [(-10 * MM, -14 * MM), (10 * MM, -14 * MM), (10 * MM, 14 * MM), (-10 * MM, 14 * MM)], up=OUT, material=titan)
     f1.driveshaft(f"Driveshaft_R{tag}", P(s * 150, WB, WZ), U + OUT * (25 * MM), mats=mats)
-    f1.wishbone(f"LowerArm_R{tag}", P(s * 150, 3230, 140), P(s * 150, 3530, 160), lower, mats=mats)
-    f1.wishbone(f"UpperArm_R{tag}", P(s * 150, 3240, 440), P(s * 150, 3500, 420), upper, mats=mats)
-    f1.pushrod(f"ToeLink_R{tag}", P(s * 150, 3510, WZ + 5), toe, mats=mats)
+    # 胴体側の取り付け点は、ギアボックスのケースの外の面から 32mm 外
+    PK = {"LF": pickup(s, 3.230, 0.140, "Gearbox"), "LR": pickup(s, 3.530, 0.160, "Gearbox"), "UF": pickup(s, 3.240, 0.440, "Gearbox"),
+          "UR": pickup(s, 3.500, 0.420, "Gearbox"), "T": pickup(s, 3.510, (WZ + 5) * MM, "Gearbox")}
+    CORNER["R" + tag + "_pk"] = PK
+    f1.wishbone(f"LowerArm_R{tag}", PK["LF"], PK["LR"], lower, mats=mats)
+    f1.wishbone(f"UpperArm_R{tag}", PK["UF"], PK["UR"], upper, mats=mats)
+    f1.pushrod(f"ToeLink_R{tag}", PK["T"], toe, mats=mats)
     f1.pushrod(f"Pushrod_R{tag}", lower + Vector((-s * 70 * MM, 20 * MM, 35 * MM)), P(s * 110, 3330, 545), mats=mats)
     f1.rocker(f"Rocker_R{tag}", P(s * 70, 3330, 530), [P(s * 110, 3330, 545), P(s * 45, 3330, 585)], normal=(0, 1, 0), clevis=True, mats=mats)
     mount(f"DamperMount_R{tag}", s * 45, 3080, 465, h=110)
@@ -343,11 +361,11 @@ for side in (-1, 1):
 
 # ---- ホイールテザー（A アームの中を通す。本数は規定書で確かめられなかったので、上下のアームに 1 本ずつ）
 for s, tg in ((-1, "FL"), (1, "FR")):
-    f1.tether(f"Tether_{tg}U", (s * 0.20, -0.18, 0.43), CORNER[tg]["upper"], mats=mats)
-    f1.tether(f"Tether_{tg}L", (s * 0.17, -0.20, 0.17), CORNER[tg]["lower"], mats=mats)
+    f1.tether(f"Tether_{tg}U", CORNER[tg + "_pk"]["UF"] - Vector((s * 0.022, 0, 0)), CORNER[tg]["upper"], mats=mats)
+    f1.tether(f"Tether_{tg}L", CORNER[tg + "_pk"]["LF"] - Vector((s * 0.022, 0, 0)), CORNER[tg]["lower"], mats=mats)
 for s, tg in ((-1, "RL"), (1, "RR")):
-    f1.tether(f"Tether_{tg}U", P(s * 150, 3240, 440), CORNER[tg]["upper"], mats=mats)
-    f1.tether(f"Tether_{tg}L", P(s * 150, 3230, 140), CORNER[tg]["lower"], mats=mats)
+    f1.tether(f"Tether_{tg}U", CORNER[tg + "_pk"]["UF"] - Vector((s * 0.022, 0, 0)), CORNER[tg]["upper"], mats=mats)
+    f1.tether(f"Tether_{tg}L", CORNER[tg + "_pk"]["LF"] - Vector((s * 0.022, 0, 0)), CORNER[tg]["lower"], mats=mats)
 
 # ---- ブレーキの配管（前の系統はマスターシリンダー 1 から前の左右へ、後ろの系統はマスターシリンダー 2 からブレーキバイワイヤの弁を通って後ろへ）
 for s, tg in ((-1, "FL"), (1, "FR")):
@@ -411,11 +429,21 @@ f1.hydraulic_pump("HydPump", P(132, YF + 65, CZ + 40), axis=(1, 0, 0), mats=mats
 f1.accumulator("Accumulator", P(190, 2600, 160), P(190, 2780, 160), mats=mats)
 f1.valve_block("ValveBlock", (-0.19, 3.00, 0.34), mats=mats)
 route("HydLine_Pump", [P(160, YF + 65, CZ + 40), P(195, YF + 75, CZ + 45), P(190, 2590, 165), P(190, 2596, 160)], r=0.005, kind="hydraulic", mats=mats)
-route("HydLine_Supply", [P(190, 2775, 160), P(230, 2860, 120), P(230, 2960, 120), P(-190, 2960, 120), P(-190, 3000, 345)], r=0.005, kind="hydraulic", mats=mats)
-route("HydLine_Shift", [P(-150, 3010, 390), P(-60, 2965, 470), P(40, 2965, 360)], r=0.004, kind="hydraulic", mats=mats)
-route("HydLine_Clutch", [P(-190, 2960, 360), P(-120, 2930, 250), P(-30, 2945, CLUTCH_Z + 20)], r=0.004, kind="hydraulic", mats=mats)
+def case_port(y, z, side=-1):
+    """ギアボックスのケースの横の面の点（油圧の口。外から光線を当てて測る）"""
+    hit = f1.fasten.ray(Vector((side * 0.6, y, z)), (-side, 0, 0), ["Gearbox"], far=0.8)
+    return hit[0] if hit else Vector((side * 0.15, y, z))
+def case_top(x, y):
+    hit = f1.fasten.ray(Vector((x, y, 1.0)), (0, 0, -1), ["Gearbox"], far=1.0)
+    return hit[0] if hit else Vector((x, y, 0.49))
+# 油圧の管はケースの外を回り、ケースの面の口で終わる（中のシフト・クラッチ・デフのアクチュエーターへはケースの中の通路で）
+route("HydLine_Supply", [P(190, 2775, 160), P(240, 2860, 160), P(240, 2930, 300), P(120, 2935, 505), P(-120, 2935, 505), P(-200, 2960, 430),
+                         P(-190, 3000, 345)], r=0.005, kind="hydraulic", mats=mats)
+route("HydLine_Shift", [P(-150, 3010, 420), P(-60, 2990, 500), case_top(0.04, 2.99) + Vector((0, 0, 0.002))], r=0.004, kind="hydraulic", mats=mats)
+route("HydLine_Clutch", [P(-190, 2960, 360), P(-200, 2945, 250), case_port(2.945, (CLUTCH_Z + 40) * MM) + Vector((-0.002, 0, 0))], r=0.004,
+      kind="hydraulic", mats=mats)
 route("PowerSteeringLine", [P(-200, 3000, 345), P(-320, 2950, 110), P(-330, 2440, 100), P(-320, 1600, 130), P(-280, 1000, 130),
-                              P(-150, 100, 170), P(-60, -110, 300)], r=0.005, kind="hydraulic", mats=mats)
+                              P(-110, 120, 230), P(-60, -110, 300)], r=0.005, kind="hydraulic", mats=mats)
 f1.small_box("PowerSteering_Valve", (0.04, -0.15, 0.255), (0.05, 0.04, 0.045), color=(0.55, 0.56, 0.58), connectors=1, electronics=False, mats=mats)
 
 # ---- 電装（ECU、配線の束）
@@ -437,7 +465,10 @@ for k, (y, z) in enumerate(((0.5, 0.065), (1.2, 0.065), (1.9, 0.065), (2.7, (CZ 
     qm.cylinder(f"Plank_Mount{k + 1}", 0.012, z - f1.EST["plank_z"] + 0.004, seg=12, location=(0, y, f1.EST["plank_z"] - 0.002), material=titan)
 for s, tg in ((-1, "L"), (1, "R")):
     f1.ride_height_sensor(f"RideHeight_F{tg}", (s * 0.07, -0.25, 0.066), mats=mats)
-    f1.ride_height_sensor(f"RideHeight_R{tg}", (s * 0.07, 3.15, 0.093), mats=mats)
+    # 後ろはギアボックスの下に余地がない（ケースの底が床のすぐ上）ので、ケースの横に付けて下を測る（位置は推定）
+    RH_R = pickup(s, 3.15, 0.090, "Gearbox", stand=0.016)
+    f1.ride_height_sensor(f"RideHeight_R{tg}", tuple(RH_R), mats=mats)
+    CORNER["RH_R" + tg] = RH_R
 tpms_m = qm.material("F1_TPMS", (0.85, 0.80, 0.15), metal=0.3, rough=0.4)
 for tg in ("FL", "FR", "RL", "RR"):
     c = CORNER[tg]["mid"]
@@ -457,7 +488,7 @@ route("FuelReturn", [rail_f * MM, P(60, YF + 30, CZ + 300), P(200, 2470, 605), P
 route("OilLineScavenge", [P(150, 2575, CZ - 30), P(150, 2470, CZ - 15), P(100, 2430, 330), P(100, 2400, 335)], r=0.008, kind="oil", mats=mats)
 route("OilLineFilter", [P(140, 2330, 420), P(160, 2350, 430), P(160, 2365, 445)], r=0.008, kind="oil", mats=mats)        # タンク → フィルター
 route("OilLineEngine", [P(180, 2370, 450), P(205, 2480, 300), P(128, YF + 20, CZ + 20)], r=0.008, kind="oil", mats=mats)  # フィルター → エンジン
-route("HydLine_Diff", [P(-190, 3020, 360), P(-120, 3300, 400), P(-50, WB, 360)], r=0.004, kind="hydraulic", mats=mats)
+route("HydLine_Diff", [P(-190, 3020, 360), P(-200, 3300, 420), case_port(WB * MM - 0.06, 0.42) + Vector((-0.002, 0, 0))], r=0.004, kind="hydraulic", mats=mats)
 
 # ---- エネルギーストアと制御電子機器の冷却（右の前の小さなクーラー → ES → CE → クーラー）
 es_in, es_out = cooler("ESCooler", 1, (440, 1370, 350), 80, 100)
@@ -473,10 +504,11 @@ route("SensorWire_RHFR", [P(-100, 0, 80), P(0, -150, 76), P(70, -240, 72)], r=0.
 route("SensorWire_Pitot", [P(-400, 1150, 220), P(-300, 1000, 450), P(-150, 0, 460), P(-50, -350, 420), P(0, -800, 340), P(0, -878, 333)],
       r=0.003, kind="wire", mats=mats)
 route("SensorWire_IMU", [P(-400, 1150, 190), P(-300, 1250, 90), P(-250, 1750, 90), P(-20, 1845, 90)], r=0.003, kind="wire", mats=mats)
-route("SensorWire_Rear", [P(-300, 2480, 470), P(-310, 2495, 120), P(-150, 2560, 70), P(-180, 2880, 80), P(-180, 3100, 100), P(-70, 3150, 90)],
-      r=0.003, kind="wire", mats=mats)
-route("SensorWire_RHRR", [P(-180, 3100, 100), P(0, 3120, 70), P(70, 3150, 90)], r=0.003, kind="wire", mats=mats)
-route("SensorWire_Light", [P(0, 3120, 70), P(0, 3560, 170), P(0, 3940, 340), P(0, 3955, 355)], r=0.003, kind="wire", mats=mats)
+route("SensorWire_Rear", [P(-300, 2480, 470), P(-310, 2495, 120), P(-150, 2560, 70), P(-180, 2880, 80), P(-200, 3100, 100),
+                          CORNER["RH_RL"] + Vector((-0.012, 0, 0.002))], r=0.003, kind="wire", mats=mats)
+route("SensorWire_RHRR", [P(-200, 3100, 100), P(-200, 3170, 500), P(200, 3170, 500), CORNER["RH_RR"] + Vector((0.012, 0, 0.002))],
+      r=0.003, kind="wire", mats=mats)                    # ギアボックスの上を越えて右へ
+route("SensorWire_Light", [P(200, 3170, 500), P(40, 3560, 470), P(40, 3800, 400), P(0, 3940, 340), P(0, 3955, 355)], r=0.003, kind="wire", mats=mats)
 
 # ---- テレメトリーのアンテナ、データロガー、レインライト
 f1.antenna("Antenna", base=(0, 0.75, f1.tub_section(750)[1] * MM - 0.002), mats=mats)
@@ -691,7 +723,8 @@ for o in [o.name for o in bpy.context.scene.objects if o.name.startswith("Cooler
 
 # ---- 油圧・潤滑の足りなかった管：ターボの軸受へのオイル（行きと戻り）、カムカバーからオイルタンクへのブリーザー
 route("TurboOilFeed", [P(205, 2480, 300), P(230, 2700, 480), P(150, 2950, 660), P(20, 3050, 670), TC + Vector((0, -0.010, 0.048))], r=0.004, kind="oil", mats=mats)
-route("TurboOilDrain", [TC + Vector((0, 0.010, -0.048)), P(0, 3070, 545), P(-60, 2980, 470), P(-150, 2890, CZ - 10), P(-150, 2870, CZ - 30)], r=0.007, kind="oil", mats=mats)
+route("TurboOilDrain", [TC + Vector((0, 0.010, -0.048)), P(100, 3030, 520), P(200, 3000, 450), P(215, 2920, 200), P(160, 2885, 100), P(150, 2872, CZ - 30)],
+      r=0.007, kind="oil", mats=mats)                     # ターボの下から右の横を下り、スカベンジポンプの後ろへ
 for bank, tg in ((-1, "L"), (1, "R")):
     q = f1.v6_point(bank, HT + 52, -40, 2560) * MM
     route(f"Breather{tg}", [q, q + Vector((0, -0.02, 0.02)), P(bank * 60, 2420, 640), P(70, (2.25 + 2.49) / 2 / MM, 600)], r=0.006, kind="oil", mats=mats)
@@ -815,13 +848,18 @@ qm.cylinder("HighSpeedCamera_Lens", 0.008, 0.010, seg=16, axis="Y", location=(-0
 # ロールフープの、電気の状態を示すランプ（ERS の状態。左右）と、上のテレビカメラの台（T カメラ）
 lo_, hi_ = FX.bbox("RollHoop")
 for s_, tg in ((-1, "L"), (1, "R")):
-    qm.box(f"RollHoop_ERSLight{tg}", (0.020, 0.010, 0.030), origin="center", location=(s_ * 0.060, lo_.y - 0.004, hi_.z - 0.060),
-           material=qm.material("F1_ERSLight", (0.1, 0.8, 0.2), rough=0.2))
+    co, nrm, _, _ = FX.bvh("RollHoop").find_nearest(Vector((s_ * 0.17, lo_.y - 0.05, hi_.z - 0.10)))     # 前の面に貼る
+    lt = qm.box(f"RollHoop_ERSLight{tg}", (0.020, 0.030, 0.010), origin="center",
+                material=qm.material("F1_ERSLight", (0.1, 0.8, 0.2), rough=0.2))
+    lt.matrix_world = FX.frame(co + nrm * 0.0045, nrm, (1, 0, 0))
 qm.box("RollHoop_TCam", (0.060, 0.090, 0.030), origin="bottom", location=(0, (lo_.y + hi_.y) / 2, hi_.z - 0.002), material=mats["carbon"])
-# 外からの非常スイッチ（電源を切る・消火器を作動させる。ロールフープの近く）と、コクピットの電源スイッチ
-for k, (nm, x) in enumerate((("MasterSwitch_External", -0.10), ("Extinguisher_ExternalButton", 0.10))):
-    qm.cylinder(nm, 0.012, 0.012, seg=16, axis="Y", location=(x, lo_.y - 0.006, lo_.z + 0.030),
-                material=qm.material("F1_Switch", (0.9, 0.75, 0.1) if k else (0.9, 0.1, 0.1), rough=0.3))
+# 外からの非常スイッチ（電源を切る・消火器を作動させる）：ロールフープの近くの、セルの横の上に外向き
+for k, (nm, s_) in enumerate((("MasterSwitch_External", -1), ("Extinguisher_ExternalButton", 1))):
+    yy = 1.93
+    hit = FX.ray(Vector((s_ * 0.6, yy, f1.tub_section(1930)[1] * MM - 0.06)), (-s_, 0, 0), ["Cell"], far=0.6)
+    q = hit[0] if hit else Vector((s_ * f1.tub_section(1930)[0] / 2 * MM, yy, 0.6))
+    sw = qm.cylinder(nm, 0.012, 0.012, seg=16, material=qm.material("F1_Switch", (0.9, 0.75, 0.1) if k else (0.9, 0.1, 0.1), rough=0.3))
+    sw.matrix_world = FX.frame(q - Vector((s_ * 0.0005, 0, 0)), (s_, 0, 0))
 qm.box("MasterSwitch_Cockpit", (0.020, 0.012, 0.020), origin="center", location=(0.12, 1.06, f1.tub_section(1060)[1] * MM - 0.04), material=mats["carbon"])
 # タイミングのトランスポンダー（ノーズの下の床。位置は推定）
 qm.box("Transponder", (0.040, 0.060, 0.015), origin="bottom", location=(0.0, 0.10, f1.EST["plank_z"] + 0.03 - 0.016), material=qm.material("F1_Transponder", (0.9, 0.85, 0.1), rough=0.4))
@@ -829,9 +867,11 @@ bolt_down("Transponder", 2, size="M4", insert=False)
 # コクピットの側のパッド（膝の横。規定で決まったエネルギー吸収材）とシートを引き上げるベルト
 for s_, tg in ((-1, "L"), (1, "R")):
     hw = f1.tub_section(1300)[0] / 2 * MM
-    qm.box(f"CockpitPad{tg}", (0.030, 0.40, 0.12), origin="bottom", location=(s_ * (hw - 0.025), 1.25, 0.25),
+    qm.box(f"CockpitPad{tg}", (0.030, 0.40, 0.12), origin="bottom", location=(s_ * (hw - f1.cell_wall() - 0.015), 1.25, 0.25),
            material=qm.material("F1_Padding", (0.15, 0.15, 0.17), metal=0.0, rough=0.9))
-    qm.tube(f"Seat_LiftStrap{tg}", [(s_ * 0.12, 1.70, 0.40), (s_ * 0.13, 1.72, 0.47), (s_ * 0.12, 1.74, 0.50)], radius=0.004, seg=8,
+    a_ = FX.nearest(Vector((s_ * 0.12, 1.70, 0.40)), ["Seat"])[0]                      # シートの面から出る輪
+    b_ = FX.nearest(Vector((s_ * 0.12, 1.74, 0.50)), ["Seat"])[0]
+    qm.tube(f"Seat_LiftStrap{tg}", [a_, (a_ + b_) / 2 + Vector((s_ * 0.01, -0.03, 0.0)), b_], radius=0.004, seg=8,
             material=qm.material("F1_Belt", (0.85, 0.15, 0.1), metal=0.0, rough=0.8))
 
 # ---- 配線の束の枝とセンサー（センサーごとにコネクターと細い線で束へつなぐ。センサーの種類は実車にあるもの、位置は推定）
@@ -846,8 +886,8 @@ LOOMS["Loom_Engine"] = [P(-300, 2480, 470)] + cov_l
 LOOMS["Loom_Cockpit"] = [P(-400, 1150, 220), P(-300, 1080, 400), P(-150, 1060, 520), P(-20, 1050, 540)]
 LOOMS["SensorWire_RHFL"] = [P(-400, 1150, 200), P(-300, 1050, 100), P(-100, 0, 80), P(-70, -240, 72)]
 loom("Loom_EngineR", [P(-300, 2480, 470), P(-120, 2492, 600), P(120, 2492, 600)] + cov_r, r=0.006)
-loom("Loom_EngineLow", [P(-300, 2480, 470), P(-335, 2520, 260), P(-335, 2700, 200), P(-260, 2880, 160)], r=0.006)
-loom("Loom_Gearbox", [cov_l[-1], P(-150, 2900, 470), P(-190, 3000, 440), P(-80, 3150, 470), P(0, 3300, 440)], r=0.006)
+loom("Loom_EngineLow", [P(-300, 2480, 470), P(-300, 2485, 140), P(-150, 2530, 95), P(-150, 2700, 90), P(-150, 2880, 95)], r=0.006)
+loom("Loom_Gearbox", [cov_l[-1], P(-150, 2900, 500), P(-190, 3000, 505), P(-80, 3150, 505), P(0, 3300, 505)], r=0.006)
 loom("Loom_Front", [P(-150, 1060, 520), P(-150, 500, 470), P(-150, 100, 450), P(0, 0, 450)], r=0.006)
 for s_, tg in ((-1, "FL"), (1, "FR")):
     up_ = CORNER[tg]["upper"]
@@ -855,7 +895,7 @@ for s_, tg in ((-1, "FL"), (1, "FR")):
                               up_ + Vector((-s_ * 0.03, -0.01, -0.06))], r=0.004)
 for s_, tg in ((-1, "RL"), (1, "RR")):
     up_ = CORNER[tg]["upper"]
-    loom(f"Loom_Corner{tg}", [P(0, 3300, 440), P(s_ * 150, 3250, 450), up_ + Vector((-s_ * 0.06, -0.03, -0.01)), up_ + Vector((-s_ * 0.03, -0.01, -0.06))], r=0.004)
+    loom(f"Loom_Corner{tg}", [P(0, 3300, 505), P(s_ * 150, 3250, 450), up_ + Vector((-s_ * 0.06, -0.03, -0.01)), up_ + Vector((-s_ * 0.03, -0.01, -0.06))], r=0.004)
 
 SENS = []
 def sens(name, pos, axis, kind="probe", size=1.0):
@@ -871,6 +911,8 @@ def sens(name, pos, axis, kind="probe", size=1.0):
                 best = (d, nm)
     f1.wire_to(f"{name}_Wire", tip, LOOMS[best[1]], mats=mats)
     SENS.append(name)
+    SENS_W.append((f"{name}_Wire", tip))
+SENS_W = []
 
 # エンジン
 sens("Sensor_Crank", P(-125, YGB - 25, CZ), (-1, 0, 0), "block")
@@ -925,6 +967,146 @@ for k, x in enumerate((-115, -45)):
 sens("Sensor_SteeringAngle", UJ2 + Vector((0, 0.03, 0.020)), (0, 0, 1), "block")
 sens("Sensor_BrakePedal", P(-80 - 32, 640, 95), (-1, 0, 0), "block", 0.9)
 print("センサー:", len(SENS))
+
+# ---- 主な部品の取り付け（点検で、触れているだけで留めていなかったもの）
+# エネルギーストア：左右の足 3 つずつを、セルの床へボルトで
+lo_, hi_ = FX.bbox("ES")
+for s_, tg in ((-1, "L"), (1, "R")):
+    for k, y in enumerate((lo_.y + 0.05, (lo_.y + hi_.y) / 2, hi_.y - 0.05)):
+        ft = qm.box(f"ES_Foot{tg}{k + 1}", (0.026, 0.030, 0.006), origin="bottom", location=(s_ * (hi_.x + 0.011), y, FT), material=titan)
+        FX.fasten(f"ES_Foot{tg}{k + 1}_Bolt", Vector((s_ * (hi_.x + 0.013), y, FT + 0.006)), (0, 0, -1), 0.006, "M6", nut=False, washer=True,
+                  drill=("Cell",), insert=True)
+# オイルタンク：左右の耳 2 つずつを、後ろの隔壁へボルトで
+lo_, hi_ = FX.bbox("OilTank")
+for s_, tg in ((-1, "L"), (1, "R")):
+    for k, z in enumerate((lo_.z + 0.06, hi_.z - 0.06)):
+        qm.box(f"OilTank_Tab{tg}{k + 1}", (0.036, 0.006, 0.030), origin="center", location=(s_ * (hi_.x + 0.012), hi_.y - 0.003, z), material=titan)
+        FX.fasten(f"OilTank_Tab{tg}{k + 1}_Bolt", Vector((s_ * (hi_.x + 0.018), hi_.y - 0.006, z)), (0, 1, 0), 0.006 + 0.010, "M6", nut=False,
+                  washer=True, drill=("Cell_RearBulkhead",))
+# マスターシリンダー：つばを、ペダルボックスの前の板へ 2 本ずつ
+for k, dx in enumerate((-35, 35)):
+    c_ = P(-80 + dx, 432, 220)
+    fl = qm.ring(f"Master{k + 1}_Flange", 0.022, 0.011, 0.005, seg=16, origin="bottom", material=titan)
+    fl.matrix_world = FX.frame(c_, (0, 1, 0), (1, 0, 0))
+    for j, u in enumerate((-1, 1)):
+        FX.fasten(f"Master{k + 1}_Bolt{j + 1}", c_ + Vector((u * 0.017, 0.005, 0)), (0, -1, 0), 0.005 + 0.010, "M5", nut=True, washer=False)
+# リザーバーの台：ペダルボックスの前の板の上へ 1 本ずつ
+for k, dx in enumerate((-35, 35)):
+    FX.fasten(f"BrakeReservoir{k + 1}_Bracket_Bolt", P(-80 + dx, 426, PT + 4), (0, 0, -1), 0.004 + 0.008, "M4", nut=False, washer=False)
+# ヘッドレスト：前の 2 本のピンで上ぶたへ（外すときは引き抜く）
+lo_, hi_ = FX.bbox("Headrest")
+for k, x in enumerate((lo_.x + 0.08, hi_.x - 0.08)):
+    FX.place(f"Headrest_Pin{k + 1}", FX.proto("pin", 0.008, 0.040, "steel"), FX.frame(Vector((x, lo_.y + 0.03, lo_.z)), (0, 0, 1)), "pin")
+# テールパイプ：後ろの衝撃吸収構造の上から、帯と支柱で支える
+hit = FX.ray(Vector((0, 3.70, 0.55)), (0, 0, -1), ["RearCrash"], far=0.4)
+if hit:
+    tp_z = 0.600 - (0.600 - 0.560) * (3.70 - 3.42) / (3.76 - 3.42)
+    band = qm.ring("Tailpipe_Strap", 0.046, 0.041, 0.016, seg=24, origin="center", material=titan)
+    band.matrix_world = FX.frame(Vector((0, 3.70, tp_z)), (0, 1, -0.1), (1, 0, 0))
+    qm.box("Tailpipe_Post", (0.012, 0.012, tp_z - 0.041 - hit[0].z + 0.002), origin="bottom", location=(0, 3.70, hit[0].z - 0.001), material=titan)
+    FX.fasten("Tailpipe_Post_Bolt", hit[0] + Vector((0.012, 0, 0.004)), (0, 0, -1), 0.010, "M5", nut=False, washer=True)
+# エアボックス：エンジンの上で 2 本の支柱でカムカバーへ
+for s_, tg in ((-1, "L"), (1, "R")):
+    top = FX.ray(Vector((s_ * 0.05, 2.70, 0.30)), (0, 0, 1), ["Airbox"], far=1.0)
+    bot = FX.ray(Vector((s_ * 0.05, 2.70, 1.2)), (0, 0, -1), [f"Engine_CamCover{tg}", "Intake_Plenum"], far=1.2)
+    if top and bot and top[0].z > bot[0].z:
+        qm.tube(f"Airbox_Strut{tg}", [bot[0], top[0] + Vector((0, 0, 0.003))], radius=0.006, seg=10, material=titan)
+# パワーステアリングの弁、スロットルを回すアクチュエーター（電気で開け閉めする）
+bolt_down("PowerSteering_Valve", 2, host=("Cell",), size="M4", insert=True)
+ta = qm.box("Intake_ThrottleActuator", (0.040, 0.040, 0.050), origin="center", location=(-0.065, (ty0 - 18) * MM, (CZ + 330) * MM),
+            material=qm.material("F1_Actuator", (0.12, 0.12, 0.13), metal=0.4, rough=0.5))
+# 点火コイルとインジェクターの線（それぞれのコネクターから、バンクの配線の束へ）
+for bank, tg, ln in ((-1, "L", "Loom_Engine"), (1, "R", "Loom_EngineR")):
+    for i, y in enumerate([y for b, k_, y in f1.v6_cylinders() if b == bank]):
+        f1.wire_to(f"Engine_Coil{tg}{i + 1}_Wire", f1.v6_point(bank, HT + 77, 0, y) * MM, LOOMS[ln], mats=mats)
+        SENS_W.append((f"Engine_Coil{tg}{i + 1}_Wire", f1.v6_point(bank, HT + 77, 0, y) * MM))
+        f1.wire_to(f"Injector_{tg}{i + 1}_Wire", f1.v6_point(bank, V6["deck"] + 46, 100, y) * MM, LOOMS[ln], mats=mats)
+        SENS_W.append((f"Injector_{tg}{i + 1}_Wire", f1.v6_point(bank, V6["deck"] + 46, 100, y) * MM))
+f1.wire_to("Intake_ThrottleActuator_Wire", Vector((-0.085, (ty0 - 18) * MM, (CZ + 330) * MM)), LOOMS["Loom_EngineR"], mats=mats)
+SENS_W.append(("Intake_ThrottleActuator_Wire", Vector((-0.085, (ty0 - 18) * MM, (CZ + 330) * MM))))
+
+# ---- 管・配線の道すじを、ほかの部品からよける（点検で、カムカバーや排気管を突き抜けていた）。
+#      セルの壁は通ってよい（通る所に継ぎ手）。小さな留め具・ほかの管は相手にしない
+def _is_small(n):
+    lo_, hi_ = FX.bbox(n)
+    return (hi_ - lo_).length < 0.025
+route_objs = {n for v in ROUTE_PARTS.values() for n in v} | {w for w, _ in SENS_W}
+passable = ("Cell", "Cell_Core", "Cell_InnerSkin", "Cell_IntrusionPanelL", "Cell_IntrusionPanelR", "Cell_FrontBulkhead", "Cell_RearBulkhead",
+            "Cell_FrontDeck", "Cell_FrontDeck_Core", "Cell_FrontDeck_InnerSkin", "Cell_RearDeck", "Cell_RearDeck_Core", "Cell_RearDeck_InnerSkin",
+            "Cell_SeatBulkhead", "Cell_SuspBulkheadF", "Cell_SuspBulkheadR", "Cell_DashBulkhead", "Airbox")
+obs_names = [o.name for o in bpy.context.scene.objects if o.type == "MESH" and o.name not in route_objs and o.name not in passable
+             and not o.data.name.startswith("_proto") and not _is_small(o.name) and not o.name.startswith("Sensor_")
+             and not o.name.startswith(("Tyre_", "Rim_", "BrakeDuct_"))]
+OBS = FX.Obstacles(obs_names)
+
+def ends_of(pts):
+    """管の端がつながっている相手（端から 3cm 以内の部品）"""
+    out = []
+    for q in (pts[0], pts[-1]):
+        out.append([n for n in OBS.near(q, 0.015) if (OBS.tree(n).find_nearest(q)[3] or 9) < 0.012])
+    return out
+
+for nm in list(ROUTES):
+    pts, r, kind = ROUTES[nm]
+    if nm == "AirInlet":          # エアボックスとターボの間の吸気の管は形が決まっているのでそのまま
+        continue
+    a_, b_ = ends_of(pts)
+    new = FX.avoid(pts, r, OBS, ignore_start=a_, ignore_end=b_)
+    for o in ROUTE_PARTS.get(nm, []):
+        if o in bpy.data.objects:
+            bpy.data.objects.remove(bpy.data.objects[o])
+    route(nm, new, r=r, kind=kind, mats=mats)
+    if nm in LOOMS:
+        LOOMS[nm] = new
+for w, tip in SENS_W:
+    if w in bpy.data.objects:
+        bpy.data.objects.remove(bpy.data.objects[w])
+    best = None
+    from mathutils.geometry import intersect_point_line as _ipl
+    for ln, lp in LOOMS.items():
+        for a, b in zip(lp, lp[1:]):
+            q, t = _ipl(tip, a, b)
+            q = a + (b - a) * min(1.0, max(0.0, t))
+            if best is None or (q - tip).length < best[0]:
+                best = ((q - tip).length, q)
+    path = FX.avoid([tip, tip + (best[1] - tip) * 0.5, best[1]], 0.0018, OBS, fixed=1, step=0.01, iters=25,
+                    ignore_start=[n for n in OBS.near(tip, 0.03)], ignore_end=[])
+    qm.tube(w, path, radius=0.0018, seg=8, material=qm.material("F1_PipeWire", (0.05, 0.05, 0.05), metal=0.0, rough=0.7))
+
+# ---- 長い管・配線の途中を、近くの骨組みへ P クリップで留める（約 30cm ごと。骨組みが 5cm 以内にある所だけ）
+hosts = ["Cell", "Cell_InnerSkin", "Gearbox", "Engine_Block", "Engine_Bedplate", "Engine_HeadL", "Engine_HeadR", "Engine_CamCoverL", "Engine_CamCoverR",
+         "Engine_FrontCover"]
+nclip = 0
+for nm, (pts, r, kind) in ROUTES.items():
+    if kind in ("air", "hv"):
+        continue
+    L_ = sum((b - a).length for a, b in zip(pts, pts[1:]))
+    if L_ < 0.40:
+        continue
+    acc, k = 0.0, 0
+    nxt = 0.15
+    for a, b in zip(pts, pts[1:]):
+        seg = (b - a).length
+        while acc + seg >= nxt and nxt < L_ - 0.10:
+            q = a + (b - a) * ((nxt - acc) / seg)
+            nxt += 0.30
+            hit = FX.nearest(q, hosts)
+            if not hit or hit[3] > 0.05 or hit[3] < r + 0.002:
+                continue
+            k += 1
+            d = (b - a).normalized()
+            n_ = (hit[0] - q)
+            n_ = (n_ - d * n_.dot(d)).normalized()
+            ring_ = qm.ring(f"{nm}_PClip{k}", r + 0.0035, r, 0.010, seg=12, origin="center", material=titan)
+            ring_.matrix_world = FX.frame(q, d, n_)
+            gap = (hit[0] - q).length - r
+            tab = qm.box(f"{nm}_PClip{k}_Tab", (0.010, 0.016, gap + 0.001), origin="bottom", material=titan)
+            tab.matrix_world = FX.frame(q + n_ * r, n_, d)
+            FX.fasten(f"{nm}_PClip{k}_Bolt", hit[0] - n_ * 0.004, n_, 0.004, "M4", nut=False, washer=False,
+                      drill=("Cell",) if hit[2].startswith("Cell") else (), insert=hit[2].startswith("Cell"))
+            nclip += 1
+        acc += seg
+print("P クリップ:", nclip)
 
 # ---- 予約した穴を、部品ごとにまとめてあける
 print("穴をあけた部品:", FX.drill_all())

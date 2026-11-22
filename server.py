@@ -231,8 +231,10 @@ def layout_problems(per: list[dict]) -> list[str]:
         ga, gb = GEOM.get(a["name"]), GEOM.get(b["name"])
         if g > tol or not ga or not gb:
             return g
-        if ga[0].overlap(gb[0]) or inside(a, b) or inside(b, a):
+        if inside(a, b) or inside(b, a):
             return 0.0
+        # 面の重なりの組を全部数える overlap() は、細かい部品どうしが広く重なると何億組にもなりメモリを使い切るので、
+        # 頂点の見本からいちばん近い面までの距離で調べる（重なっていれば 0 に近くなる）
         d = min((gb[0].find_nearest(v)[3] for v in ga[1]), default=g)
         d = min([d] + [ga[0].find_nearest(v)[3] for v in gb[1]])
         return d if d is not None else g

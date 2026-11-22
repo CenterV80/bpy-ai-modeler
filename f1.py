@@ -918,7 +918,7 @@ def differential(name: str = "Diff", case_r: float = 0.060, case_len: float = 0.
         parts += [g, hub]
         for k in range(6):          # クラッチ板（摩擦板と鋼の板を交互）
             z = side * (0.020 + k * 0.004)
-            parts.append(qm.ring(f"{name}_ClutchPlate{tag}{k + 1}", 0.038, 0.015, 0.0018, seg=32, origin="center", location=(0, 0, z),
+            parts.append(qm.ring(f"{name}_ClutchPlate{tag}{k + 1}", 0.038, 0.012, 0.0018, seg=32, origin="center", location=(0, 0, z),
                                  material=steel if k % 2 else qm.material("F1_Friction", (0.25, 0.20, 0.15), metal=0.2, rough=0.8)))
     for side, tag in ((-1, "A"), (1, "B")):
         p_ = qm.bevel_gear(f"{name}_Pinion{tag}", zp, m_, 0.012, gp, material=steel)
@@ -1222,6 +1222,8 @@ def steering_wheel(name: str = "Wheel", mats=None):
         c = qm.box(f"{name}_ClutchPaddle{t}", (0.070, 0.005, 0.030), origin="center", location=(s * 0.070, -0.026, -0.040), material=alu)
         qm.pivot(c, (s * 0.04, -0.026, -0.04), (0, 0, s * -8))
         parts += [p, c]
+        for nm_, z_ in (("ShiftPivot", 0.018), ("ClutchPivot", -0.040)):     # パドルの付け根の軸受け（ホイールの裏の台から）
+            parts.append(qm.box(f"{name}_{nm_}{t}", (0.012, 0.022, 0.020), origin="center", location=(s * 0.040, -0.020, z_), material=alu))
     parts.append(qm.cylinder(f"{name}_PaddleMount", 0.032, 0.012, seg=16, axis="Y", location=(0, -0.024, 0), material=alu))
     parts.append(qm.cylinder(f"{name}_QuickRelease", 0.024, 0.045, seg=16, axis="Y", location=(0, -0.052, 0), material=alu))
     parts.append(qm.cylinder(f"{name}_ReleaseCollar", 0.030, 0.012, seg=16, axis="Y", location=(0, -0.060, 0), material=btn_cols[1]))
@@ -1834,10 +1836,18 @@ def pipe(name: str, points, r: float = 0.019, kind: str = "hose", mats=None):
     pts = [Vector(p) for p in points]
     parts = [qm.tube(name, pts, radius=r, seg=12, material=m)]
     hollow(parts[0], pts, r, max(0.0008, r * 0.12))
-    for k, (p, q) in enumerate(((pts[0], pts[1]), (pts[-1], pts[-2]))):
-        d = (q - p).normalized()
+    def along(seq, dist):
+        """折れ線 seq の始めから dist の点と向き"""
+        for a, b in zip(seq, seq[1:]):
+            L = (b - a).length
+            if L >= dist and L > 1e-9:
+                return a + (b - a) * (dist / L), (b - a).normalized()
+            dist -= L
+        return seq[-1], (seq[-1] - seq[-2]).normalized()
+    for k, seq in enumerate((pts, pts[::-1])):
+        q, d = along(seq, 0.02)
         cl = qm.ring(f"{name}_Clamp{k + 1}", r + 0.003, r - 0.001, 0.008, seg=12, origin="center", material=steel)
-        qm.orient(cl, origin=p + d * 0.02, x_axis=d.orthogonal(), z_axis=d)
+        qm.orient(cl, origin=q, x_axis=d.orthogonal(), z_axis=d)
         parts.append(cl)
     return parts
 
