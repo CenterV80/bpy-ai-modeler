@@ -624,8 +624,10 @@ def upright(name: str, center, upper, lower, steer, axis=(-1, 0, 0), clevis: boo
     return parts
 
 
-def steering_rack(name: str, center, half: float = 0.17, mats=None):
-    """ステアリングラック（本体の筒、ピニオンの箱、左右の蛇腹ブーツ）。X 方向に置く。戻り値はリスト"""
+def steering_rack(name: str, center, half: float = 0.17, reach: float = 0.0, mats=None):
+    """ステアリングラック（本体の筒、ピニオンの箱、左右の蛇腹ブーツ）。X 方向に置く。
+    reach > 0 なら、中のラックの棒を左右の中心から reach まで出し、先に内側のボールジョイント（{name}_InnerJoint{L,R}）を付ける
+    （トラックロッドはここから。ブーツは本体の端から棒の先の手前まで）。戻り値はリスト"""
     alu = _mk(mats, "alu", (0.75, 0.76, 0.78), metal=0.9, rough=0.3)
     rubber = _m(mats, "tyre") or qm.material("F1_Boot", (0.03, 0.03, 0.03), rough=0.8)
     c = Vector(center)
@@ -633,11 +635,19 @@ def steering_rack(name: str, center, half: float = 0.17, mats=None):
     pinion = qm.cylinder(f"{name}_Pinion", 0.026, 0.07, seg=16, location=c + Vector((0.04, 0, 0.0)), material=alu)
     qm.pivot(pinion, c + Vector((0.04, 0, 0)), (-35, 0, 0))
     parts = [body, pinion]
+    steel = _mk(mats, "steel", (0.62, 0.62, 0.64), metal=0.9, rough=0.3)
+    n = 13 if reach <= 0 else max(3, int((reach - 0.014 - half * 0.6) / 0.0075) | 1)
     for side in (-1, 1):
-        prof = [(0.018 if k % 2 == 0 else 0.027, k * 0.0075) for k in range(13)]
-        boot = qm.lathe(f"{name}_Boot{'L' if side < 0 else 'R'}", prof, seg=16, material=rubber)
+        tg = 'L' if side < 0 else 'R'
+        prof = [(0.018 if k % 2 == 0 else 0.027, k * 0.0075) for k in range(n)]
+        boot = qm.lathe(f"{name}_Boot{tg}", prof, seg=16, material=rubber)
         qm.orient(boot, origin=c + Vector((side * half * 0.6, 0, 0)), x_axis=(0, 1, 0), z_axis=(side, 0, 0))
         parts.append(boot)
+        if reach > 0:
+            parts.append(qm.tube(f"{name}_Bar{tg}", [c + Vector((side * half * 0.45, 0, 0)), c + Vector((side * (reach - 0.008), 0, 0))],
+                                 radius=0.0095, seg=16, material=steel))
+            parts.append(qm.cylinder(f"{name}_InnerJoint{tg}", 0.016, 0.026, seg=16, axis="X", location=c + Vector((side * reach, 0, 0)),
+                                     material=steel))
     return parts
 
 
@@ -1053,15 +1063,18 @@ def survival_cell(name: str = "Cell", mats=None):
                    location=(0, y * MM + (0.005 if y < 0 else -0.005), z0 + wall), material=carbon)
         parts.append(b)
     if HOLLOW:
-        def ring(nm, y, rim, t):
-            """輪の隔壁（セルの内側に沿う枠。中は脚や配管が通れるように抜く）"""
+        def ring(nm, y, rim, t, open_bottom=False):
+            """輪の隔壁（セルの内側に沿う枠。中は脚や配管が通れるように抜く）。
+            open_bottom なら下の辺を抜いた門の形（床の上をペダルボックスが通る）"""
             w, top = tub_section(y)
             iw, ih = w * MM - 2 * wall, top * MM - z0 - 2 * wall
             b = qm.box(nm, (iw, t, ih), origin="bottom", location=(0, y * MM, z0 + wall), material=carbon)
-            qm.cut(b, [qm.box("_ring", (iw - 2 * rim, t + 0.01, ih - 2 * rim), origin="bottom", location=(0, y * MM, z0 + wall + rim))])
+            lo = 0.0 if open_bottom else rim
+            qm.cut(b, [qm.box("_ring", (iw - 2 * rim, t + 0.01, ih - rim - lo + (0.01 if open_bottom else 0)), origin="bottom",
+                              location=(0, y * MM, z0 + wall + lo - (0.01 if open_bottom else 0)))])
             return b
         parts.append(ring(f"{name}_SuspBulkheadF", -200, 0.040, 0.012))     # 前の A アームの前の脚の位置
-        parts.append(ring(f"{name}_SuspBulkheadR", 210, 0.040, 0.012))      # 後ろの脚の位置
+        parts.append(ring(f"{name}_SuspBulkheadR", 210, 0.040, 0.012, open_bottom=True))   # 後ろの脚の位置（下はペダルボックスが通る）
         parts.append(ring(f"{name}_DashBulkhead", c0 - 20, 0.035, 0.012))   # ダッシュ（コクピットの前の縁）
         # コクピットと燃料タンクの間の隔壁（全面。シートの背と燃料タンクの前の間）
         w, top = tub_section(1872)
@@ -1109,23 +1122,26 @@ def roll_hoop(name: str = "RollHoop", y: float = 1.87, top_z: float = 0.96, half
 
 def halo_frame(name: str = "Halo", rear_y: float = 1.80, front_y: float = 1.10, half_w: float = 0.28,
                top_z: float = 0.84, mats=None):
-    """ヘイロー（チタンの輪。後ろの左右 2 か所と、前の 1 本の支柱でサバイバルセルに付く）。戻り値はリスト"""
+    """ヘイロー（チタンの輪。後ろの左右 2 か所の台と、前の 1 本の支柱の足の板で、サバイバルセルの上ぶたに付く）。
+    rear_y はコクピットの開口の後ろ（後ろの上ぶたの上）、front_y はダッシュの前（前の上ぶたの上）に置く。戻り値はリスト"""
     MM = 0.001
     ti = _mk(mats, "titanium", (0.45, 0.45, 0.47), metal=1.0, rough=0.3)
     _, zr = tub_section(rear_y / MM)
     _, zf = tub_section(front_y / MM)
     zr, zf = zr * MM - 0.01, zf * MM - 0.01
     span = rear_y - front_y
-    pts = [(-half_w, rear_y, zr), (-half_w * 0.98, rear_y - span * 0.15, top_z - 0.06),
+    pts = [(-half_w, rear_y, zr), (-half_w * 0.98, rear_y - span * 0.06, top_z - 0.08),       # 後ろの脚は急に立ち上がる（縁とヘッドレストをまたぐ）
            (-half_w * 0.85, rear_y - span * 0.55, top_z - 0.01), (-half_w * 0.45, front_y + span * 0.08, top_z),
            (0, front_y + 0.02, top_z + 0.005)]
     pts = pts + [(-x, yy, zz) for x, yy, zz in reversed(pts[:-1])]
     ring = qm.tube(name, pts, radius=0.023, seg=12, material=ti)
-    pillar = qm.sweep(f"{name}_Pillar", [(0, front_y + 0.02, top_z), (0, front_y - 0.02, (top_z + zf) / 2), (0, front_y - 0.04, zf)],
+    zfd = zf + 0.01                                  # 前の上ぶたの上面
+    pillar = qm.sweep(f"{name}_Pillar", [(0, front_y + 0.02, top_z), (0, front_y - 0.02, (top_z + zfd) / 2), (0, front_y - 0.04, zfd + 0.016)],
                       [(-0.012, -0.022), (0.012, -0.022), (0.012, 0.022), (-0.012, 0.022)], up=(0, -1, 0.3), material=ti)
+    foot = qm.box(f"{name}_PillarFoot", (0.060, 0.100, 0.010), origin="bottom", location=(0, front_y - 0.045, zfd), material=ti)
     mounts = [qm.box(f"{name}_Mount{t}", (0.05, 0.08, 0.02), origin="bottom", location=(s * half_w, rear_y, zr - 0.005), material=ti)
               for s, t in ((-1, "L"), (1, "R"))]
-    return [ring, pillar] + mounts
+    return [ring, pillar, foot] + mounts
 
 
 def seat(name: str = "Seat", path=None, width: float = 0.38, side_h: float = 0.09, mats=None):
@@ -1181,10 +1197,10 @@ def headrest(name: str = "Headrest", y0: float = 1.60, y1: float = 1.84, mats=No
     MM = 0.001
     foam = qm.material("F1_Foam", (0.10, 0.10, 0.12), metal=0.0, rough=0.9)
     w, top = tub_section(y1 / MM)
-    hw = (w / 2 - 40) * MM
+    hw = (w / 2 - 95) * MM                      # 外の縁はセルの縁より 60mm 内側（ヘイローの後ろの脚の内側に収める）
     z = top * MM - 0.005
     path = [(-hw, y0, z), (-hw, y1, z), (hw, y1, z), (hw, y0, z)]
-    return [qm.sweep(name, path, [(-0.04, 0), (0.04, 0), (0.04, 0.11), (-0.04, 0.11)], up=(0, 0, 1), material=foam)]
+    return [qm.sweep(name, path, [(-0.035, 0), (0.035, 0), (0.035, 0.11), (-0.035, 0.11)], up=(0, 0, 1), material=foam)]
 
 
 def steering_wheel(name: str = "Wheel", mats=None):
