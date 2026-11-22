@@ -77,6 +77,14 @@ python server.py
 - ビューアー: http://127.0.0.1:8000
 - AI の接続先（MCP）: http://127.0.0.1:8000/mcp
 
+AI を通さずに作例などのスクリプトを 1 本だけ実行するときは `--run` を付けます。結果は `output` に保存され、
+ビューアーの「実行の履歴」に出ます（ビューアーが動いていれば、ページを開き直すと出ます）。
+
+```powershell
+# Windows（このフォルダで）
+.venv\Scripts\python.exe server.py --run skills\bpy-modeling\examples\f1_chassis_catalog_mm.py
+```
+
 ## AI をつなぐ
 
 使う AI のアプリによって、つなぎ方が2通りあります。ふだんはどちらか片方で十分です。
@@ -425,8 +433,9 @@ Compress-Archive -Force skills\bpy-modeling bpy-modeling.zip
 |---|---|---|
 | `--port` | `8000` | ポート（環境変数 `PORT` でも可） |
 | `--stdio` | なし | MCP を標準入出力で受ける |
+| `--run ファイル` | なし | スクリプトのファイルを 1 回だけ実行して結果を `output` に保存し、検査の結果を表示して終わる（AI を通さずに作例を動かすとき） |
 | `--out` | `./output` | 結果の保存先（実行ごとに `runs/0001/` のようなフォルダができる） |
-| `--timeout` | `60` | スクリプト1回の制限時間（秒）。macOS / Linux のみ。Windows では効かないので、止まったら Ctrl+C で再起動する |
+| `--timeout` | `240` | スクリプト1回の制限時間（秒）。macOS / Linux のみ。Windows では効かないので、止まったら Ctrl+C で再起動する |
 | 環境変数 `BPY_MODELER_TEXTURES` | `./textures` | テクスチャの置き場所 |
 
 ## うまくいかないとき

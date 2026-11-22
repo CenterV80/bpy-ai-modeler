@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parent
 ap = argparse.ArgumentParser(description="bpy モデラー（AI に操作させるローカルサーバー）")
 ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
 ap.add_argument("--stdio", action="store_true", help="MCP を標準入出力で受ける（Claude Desktop 向け）")
+ap.add_argument("--run", metavar="FILE", help="スクリプトのファイルを 1 回実行して結果を output に保存し、検査の結果を表示して終わる（AI を通さずに作例を動かすとき）")
 ap.add_argument("--out", default=os.environ.get("BPY_MODELER_OUT", str(ROOT / "output")), help="結果を保存するフォルダ")
 ap.add_argument("--timeout", type=float, default=float(os.environ.get("BPY_MODELER_TIMEOUT", "240")),
                 help="スクリプト1回の制限時間（秒、macOS / Linux のみ）")
@@ -1180,6 +1181,23 @@ def main() -> None:
     except Exception as e:
         log(f"サンプルのテクスチャを作れませんでした: {e}")
     reset_scene()
+    if ARGS.run:
+        # AI を通さずに 1 本だけ実行する。結果は output に保存されるので、動いているビューアーの「実行の履歴」にも出る
+        path = Path(ARGS.run)
+        code = path.read_text(encoding="utf-8")
+        log(f"{path.name} を実行します（大きな作例は数分かかります）")
+        run = execute(code, "")
+        if not run["ok"]:
+            print(report(run), flush=True)
+            sys.exit(1)
+        s_ = run["stats"]
+        print(f"実行 {run['id']}「{run['title']}」: 成功（{run['seconds']} 秒）", flush=True)
+        print(f"オブジェクト {s_['objects']:,} / 頂点 {s_['verts']:,} / 面 {s_['faces']:,}、図鑑 {len(run['catalog'])} 項目", flush=True)
+        print("検査の問題: " + ("なし" if not run["problems"] else "\n- " + "\n- ".join(run["problems"])), flush=True)
+        folder = RUNS_DIR / f"{run['id']:04d}"
+        print(f"保存先: {folder}", flush=True)
+        print(f"見るとき: サーバーを起動して（start.bat か python server.py）、http://127.0.0.1:{ARGS.port}/ の「実行の履歴」から", flush=True)
+        return
     if ARGS.stdio:
         # ポートが使われていたら、同じ output を見ている bpy モデラーのビューアーに相乗りする。
         # 別のものなら、空いている次のポートで開く
